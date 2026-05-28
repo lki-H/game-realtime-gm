@@ -1,0 +1,16 @@
+.idea/
+.vscode/
+*.log
+*.tmp
+.env
+
+node_modules/
+dist/
+build/
+
+backend/*.exe
+backend/tmp/
+backend/.air/
+
+.DS_Store
+Thumbs.db
