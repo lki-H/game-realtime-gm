@@ -1,21 +1,42 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 
+	"game-realtime-gm/backend/internal/cache"
+	"game-realtime-gm/backend/internal/config"
+	"game-realtime-gm/backend/internal/database"
 	"game-realtime-gm/backend/internal/router"
 )
 
 func main() {
-	r := router.New()
+	cfg := config.Load()
+	ctx := context.Background()
+
+	dbPool, err := database.NewPostgresPool(ctx, cfg.Database)
+	if err != nil {
+		log.Fatal("connect database failed: ", err)
+	}
+	defer dbPool.Close()
+	log.Println("database connected")
+
+	redisClient, err := cache.NewRedisClient(ctx, cfg.Redis)
+	if err != nil {
+		log.Fatal("connect redis failed: ", err)
+	}
+	defer redisClient.Close()
+	log.Println("redis connected")
+
+	r := router.New(dbPool, redisClient, cfg)
 
 	srv := &http.Server{
-		Addr:    ":8080",
+		Addr:    ":" + cfg.AppPort,
 		Handler: r,
 	}
 
-	log.Println("server listening on :8080")
+	log.Println("server listening on :" + cfg.AppPort)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

@@ -1,16 +1,43 @@
+# IDE / editor
 .idea/
 .vscode/
+*.swp
+*.swo
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Logs and temporary files
 *.log
 *.tmp
-.env
+tmp/
+temp/
 
+# Frontend dependencies and build output
 node_modules/
 dist/
 build/
+coverage/
 
+# Go build output
+*.exe
+*.test
+*.out
 backend/*.exe
 backend/tmp/
 backend/.air/
 
+# Docker / database local data
+*.pid
+*.dump
+*.sql.gz
+postgres_data/
+redis_data/
+
+# OS files
 .DS_Store
 Thumbs.db
