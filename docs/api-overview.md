@@ -281,6 +281,59 @@ GET /api/players/1
 40115 admin identity missing
 ```
 
+### GET /api/admin/dashboard/summary
+
+用途：查询 GM 后台首页统计数据。
+
+鉴权：管理员 token。
+
+返回数据：
+
+```text
+total_players：玩家总数
+normal_players：正常玩家数
+banned_players：被封禁玩家数
+today_new_players：今日新增玩家数
+online_players：当前在线玩家数
+today_admin_operations：今日 GM 操作次数
+```
+
+响应示例：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "total_players": 12,
+    "normal_players": 10,
+    "banned_players": 2,
+    "today_new_players": 3,
+    "online_players": 1,
+    "today_admin_operations": 8
+  }
+}
+```
+
+说明：
+
+```text
+玩家相关统计来自 PostgreSQL players 表。
+在线玩家数来自 Redis online:player:* key。
+今日 GM 操作次数来自 PostgreSQL admin_operation_logs 表。
+```
+
+主要错误：
+
+```text
+50091 count total players failed
+50092 count normal players failed
+50093 count banned players failed
+50094 count today new players failed
+50095 count online players failed
+50096 count today admin operations failed
+```
+
 ### GET /api/admin/players
 
 用途：GM 查询玩家列表。

@@ -17,7 +17,7 @@ func New(db *pgxpool.Pool, redisClient *redis.Client, cfg config.Config) http.Ha
 
 	authHandler := handler.NewAuthHandler(db, cfg.JWTSecret)
 	adminAuthHandler := handler.NewAdminAuthHandler(db, cfg.JWTSecret)
-	adminHandler := handler.NewAdminHandler(db)
+	adminHandler := handler.NewAdminHandler(db, redisClient)
 	playerHandler := handler.NewPlayerHandler(db)
 	onlineHandler := handler.NewOnlineHandler(redisClient)
 
@@ -40,6 +40,7 @@ func New(db *pgxpool.Pool, redisClient *redis.Client, cfg config.Config) http.Ha
 	adminProtected := api.Group("/admin")
 	adminProtected.Use(middleware.AdminAuth(cfg.JWTSecret))
 	adminProtected.GET("/me", adminHandler.Me)
+	adminProtected.GET("/dashboard/summary", adminHandler.DashboardSummary)
 	adminProtected.GET("/players", adminHandler.ListPlayers)
 	adminProtected.GET("/players/:id", adminHandler.GetPlayerByID)
 	adminProtected.POST("/players/:id/ban", adminHandler.BanPlayer)

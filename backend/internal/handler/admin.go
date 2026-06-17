@@ -14,10 +14,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 type AdminHandler struct {
-	db *pgxpool.Pool
+	db          *pgxpool.Pool
+	redisClient *redis.Client
 }
 
 type banPlayerRequest struct {
@@ -28,8 +30,11 @@ type unbanPlayerRequest struct {
 	Reason string `json:"reason" binding:"required"`
 }
 
-func NewAdminHandler(db *pgxpool.Pool) *AdminHandler {
-	return &AdminHandler{db: db}
+func NewAdminHandler(db *pgxpool.Pool, redisClient *redis.Client) *AdminHandler {
+	return &AdminHandler{
+		db:          db,
+		redisClient: redisClient,
+	}
 }
 
 func (h *AdminHandler) Me(c *gin.Context) {
@@ -51,6 +56,99 @@ func (h *AdminHandler) Me(c *gin.Context) {
 			"role":     middleware.CurrentAdminRole(c),
 		},
 	})
+}
+
+func (h *AdminHandler) DashboardSummary(c *gin.Context) {
+	location := time.FixedZone("Asia/Shanghai", 8*60*60)
+	now := time.Now().In(location)
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
+
+	var totalPlayers int64
+	if err := h.db.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM players`).Scan(&totalPlayers); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50091,
+			"message": "count total players failed",
+		})
+		return
+	}
+
+	var normalPlayers int64
+	if err := h.db.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM players WHERE status = $1`, "normal").Scan(&normalPlayers); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50092,
+			"message": "count normal players failed",
+		})
+		return
+	}
+
+	var bannedPlayers int64
+	if err := h.db.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM players WHERE status = $1`, "banned").Scan(&bannedPlayers); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50093,
+			"message": "count banned players failed",
+		})
+		return
+	}
+
+	var todayNewPlayers int64
+	if err := h.db.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM players WHERE created_at >= $1`, todayStart).Scan(&todayNewPlayers); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50094,
+			"message": "count today new players failed",
+		})
+		return
+	}
+
+	onlinePlayers, err := h.countOnlinePlayers(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50095,
+			"message": "count online players failed",
+		})
+		return
+	}
+
+	var todayAdminOperations int64
+	if err := h.db.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM admin_operation_logs WHERE created_at >= $1`, todayStart).Scan(&todayAdminOperations); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50096,
+			"message": "count today admin operations failed",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "ok",
+		"data": gin.H{
+			"total_players":          totalPlayers,
+			"normal_players":         normalPlayers,
+			"banned_players":         bannedPlayers,
+			"today_new_players":      todayNewPlayers,
+			"online_players":         onlinePlayers,
+			"today_admin_operations": todayAdminOperations,
+		},
+	})
+}
+
+func (h *AdminHandler) countOnlinePlayers(c *gin.Context) (int64, error) {
+	var cursor uint64
+	var total int64
+
+	for {
+		keys, nextCursor, err := h.redisClient.Scan(c.Request.Context(), cursor, "online:player:*", 100).Result()
+		if err != nil {
+			return 0, err
+		}
+
+		total += int64(len(keys))
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+
+	return total, nil
 }
 
 func (h *AdminHandler) recordOperation(c *gin.Context, action string, targetType string, targetID *int64, detail string) {
