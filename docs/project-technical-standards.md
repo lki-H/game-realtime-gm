@@ -11,6 +11,81 @@
 
 这份文档会贯穿整个项目周期，而不是某一天的任务计划。
 
+## GitHub 日常提交规范
+
+本项目已经上传到 GitHub：
+
+```text
+https://github.com/lki01/game-realtime-gm.git
+```
+
+当前主分支：
+
+```text
+main
+```
+
+以后每次生成 `docs/dayXX-plan.md` 时，文档末尾必须包含 GitHub 收尾流程。
+
+默认节奏：
+
+```text
+当天任务完成
+        ↓
+go test ./... 通过
+        ↓
+git status 检查文件
+        ↓
+选择性 git add
+        ↓
+git commit
+        ↓
+git push
+```
+
+不要无脑使用：
+
+```powershell
+git add .
+```
+
+原因是项目里可能存在不适合上传 GitHub 的内部协作文档或隐私文件。
+
+每次提交前必须检查不要上传：
+
+```text
+.env
+.env.*
+*.pem
+*.key
+*.dump
+*.sql.gz
+*.log
+真实手机号
+真实邮箱
+真实数据库密码
+真实 JWT_SECRET
+Docker volume 数据
+GoLand 临时文件
+```
+
+本项目默认不建议上传：
+
+```text
+docs/codex-context.md
+docs/conversation-handoff-gpt55.md
+docs/mcp-adoption-plan.md
+docs/skill-adoption-plan.md
+```
+
+旧的 `claude.md` 已整合进项目根目录 `AGENTS.md`，后续不再单独维护。
+
+完整流程见：
+
+```text
+docs/github-workflow.md
+```
+
 ## 参考项目与参考方式
 
 这些开源项目不要求照抄，只用于观察成熟项目如何组织工程。
@@ -886,4 +961,3 @@ Day 46-56：
 ```
 
 只要坚持这个标准，这个项目就能真正训练出后端工程能力。
-
