@@ -41,6 +41,7 @@ func New(db *pgxpool.Pool, redisClient *redis.Client, cfg config.Config) http.Ha
 	adminProtected.Use(middleware.AdminAuth(cfg.JWTSecret))
 	adminProtected.GET("/me", adminHandler.Me)
 	adminProtected.GET("/dashboard/summary", adminHandler.DashboardSummary)
+	adminProtected.GET("/dashboard/recent-operation-logs", adminHandler.RecentOperationLogs)
 	adminProtected.GET("/players", adminHandler.ListPlayers)
 	adminProtected.GET("/players/:id", adminHandler.GetPlayerByID)
 	adminProtected.POST("/players/:id/ban", adminHandler.BanPlayer)

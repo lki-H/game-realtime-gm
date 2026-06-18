@@ -334,6 +334,67 @@ today_admin_operations：今日 GM 操作次数
 50096 count today admin operations failed
 ```
 
+### GET /api/admin/dashboard/recent-operation-logs
+
+用途：查询 GM 后台首页最近操作日志。
+
+鉴权：管理员 token。
+
+常用查询参数：
+
+```text
+limit=10
+```
+
+参数说明：
+
+```text
+limit：返回最近多少条日志，默认 10，最大 20。
+```
+
+响应重点：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "items": [
+      {
+        "id": 12,
+        "admin_id": 1,
+        "admin_username": "admin",
+        "admin_role": "super_admin",
+        "action": "admin.players.list",
+        "target_type": "player",
+        "target_id": null,
+        "detail": "page=1,page_size=10",
+        "ip": "::1",
+        "user_agent": "Apifox/xxx",
+        "created_at": "2026-06-18T09:00:00Z"
+      }
+    ],
+    "limit": 10
+  }
+}
+```
+
+说明：
+
+```text
+该接口用于 dashboard 首页最近动态。
+返回结果按 id DESC 排序。
+该接口不额外写入 GM 操作日志。
+```
+
+主要错误：
+
+```text
+50101 query recent operation logs failed
+50102 scan recent operation log failed
+50103 read recent operation log rows failed
+```
+
 ### GET /api/admin/players
 
 用途：GM 查询玩家列表。

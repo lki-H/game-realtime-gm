@@ -155,6 +155,72 @@ func (h *AdminHandler) DashboardSummary(c *gin.Context) {
 	})
 }
 
+func (h *AdminHandler) RecentOperationLogs(c *gin.Context) {
+	limit := parsePositiveInt(c.DefaultQuery("limit", "10"), 10)
+	if limit > 20 {
+		limit = 20
+	}
+
+	rows, err := h.db.Query(
+		c.Request.Context(),
+		`SELECT id, admin_id, admin_username, admin_role, action, target_type, target_id, detail, ip, user_agent, created_at
+         FROM admin_operation_logs
+         ORDER BY id DESC
+         LIMIT $1`,
+		int32(limit),
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50101,
+			"message": "query recent operation logs failed",
+		})
+		return
+	}
+	defer rows.Close()
+
+	logs := make([]model.AdminOperationLog, 0)
+	for rows.Next() {
+		var operationLog model.AdminOperationLog
+		if err := rows.Scan(
+			&operationLog.ID,
+			&operationLog.AdminID,
+			&operationLog.AdminUsername,
+			&operationLog.AdminRole,
+			&operationLog.Action,
+			&operationLog.TargetType,
+			&operationLog.TargetID,
+			&operationLog.Detail,
+			&operationLog.IP,
+			&operationLog.UserAgent,
+			&operationLog.CreatedAt,
+		); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"code":    50102,
+				"message": "scan recent operation log failed",
+			})
+			return
+		}
+		logs = append(logs, operationLog)
+	}
+
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50103,
+			"message": "read recent operation log rows failed",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "ok",
+		"data": gin.H{
+			"items": logs,
+			"limit": limit,
+		},
+	})
+}
+
 func (h *AdminHandler) countOnlinePlayers(c *gin.Context) (int64, error) {
 	var cursor uint64
 	var total int64
