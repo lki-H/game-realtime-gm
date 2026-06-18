@@ -461,6 +461,49 @@ POST /api/admin/players/1/unban
 
 以下接口需要管理员 token。
 
+### GET /api/admin/operation-log-actions
+
+用途：查询 GM 操作日志 action 筛选选项。
+
+鉴权：管理员 token。
+
+响应重点：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "items": [
+      {
+        "value": "admin.players.list",
+        "label": "查询玩家列表"
+      },
+      {
+        "value": "admin.players.detail",
+        "label": "查看玩家详情"
+      },
+      {
+        "value": "admin.players.ban",
+        "label": "封禁玩家"
+      },
+      {
+        "value": "admin.players.unban",
+        "label": "解封玩家"
+      }
+    ]
+  }
+}
+```
+
+说明：
+
+```text
+value 是实际用于 /api/admin/operation-logs?action=xxx 的筛选值。
+label 是前端下拉框展示给 GM 看的中文名称。
+这个接口只返回筛选选项，不额外写入 GM 操作日志。
+```
+
 ### GET /api/admin/operation-logs
 
 用途：分页查询 GM 操作日志。

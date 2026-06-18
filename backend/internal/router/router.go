@@ -45,6 +45,7 @@ func New(db *pgxpool.Pool, redisClient *redis.Client, cfg config.Config) http.Ha
 	adminProtected.GET("/players/:id", adminHandler.GetPlayerByID)
 	adminProtected.POST("/players/:id/ban", adminHandler.BanPlayer)
 	adminProtected.POST("/players/:id/unban", adminHandler.UnbanPlayer)
+	adminProtected.GET("/operation-log-actions", adminHandler.ListOperationLogActions)
 	adminProtected.GET("/operation-logs", adminHandler.ListOperationLogs)
 	adminProtected.GET("/operation-logs/:id", adminHandler.GetOperationLogByID)
 	return r

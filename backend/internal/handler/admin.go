@@ -30,6 +30,30 @@ type unbanPlayerRequest struct {
 	Reason string `json:"reason" binding:"required"`
 }
 
+type operationLogActionOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+var operationLogActionOptions = []operationLogActionOption{
+	{
+		Value: "admin.players.list",
+		Label: "查询玩家列表",
+	},
+	{
+		Value: "admin.players.detail",
+		Label: "查看玩家详情",
+	},
+	{
+		Value: "admin.players.ban",
+		Label: "封禁玩家",
+	},
+	{
+		Value: "admin.players.unban",
+		Label: "解封玩家",
+	},
+}
+
 func NewAdminHandler(db *pgxpool.Pool, redisClient *redis.Client) *AdminHandler {
 	return &AdminHandler{
 		db:          db,
@@ -640,6 +664,16 @@ func (h *AdminHandler) UnbanPlayer(c *gin.Context) {
 		"code":    0,
 		"message": "unban player success",
 		"data":    player,
+	})
+}
+
+func (h *AdminHandler) ListOperationLogActions(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "ok",
+		"data": gin.H{
+			"items": operationLogActionOptions,
+		},
 	})
 }
 
