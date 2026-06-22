@@ -240,6 +240,39 @@ GET /api/players/1
 50012 query player failed
 ```
 
+## WebSocket 实时连接模块
+
+### GET /ws
+
+用途：建立最小 WebSocket 长连接，用于验证实时通信入口。
+
+连接地址：
+
+```text
+ws://localhost:8080/ws
+```
+
+鉴权：Day 19 暂不需要 token。
+
+连接成功后，服务端会主动发送欢迎消息：
+
+```json
+{
+  "type": "welcome",
+  "content": "connected to game realtime server",
+  "server_time": "2026-06-22T10:00:00+08:00"
+}
+```
+
+客户端发送文本消息后，服务端会原样回显。
+
+说明：
+
+```text
+该接口是实时服务主线的最小连接验证。
+Day 19 暂不做 JWT 鉴权、玩家连接绑定、房间广播和心跳。
+```
+
 ## 在线状态模块
 
 以下接口需要玩家 token。
