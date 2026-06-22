@@ -22,7 +22,7 @@ func New(db *pgxpool.Pool, redisClient *redis.Client, cfg config.Config) http.Ha
 	onlineHandler := handler.NewOnlineHandler(redisClient)
 
 	r.GET("/health", handler.Health)
-	r.GET("/ws", handler.WebSocketEcho)
+	r.GET("/ws", handler.WebSocketEcho(cfg.JWTSecret))
 
 	api := r.Group("/api")
 	api.POST("/register", authHandler.Register)

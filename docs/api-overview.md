@@ -244,15 +244,15 @@ GET /api/players/1
 
 ### GET /ws
 
-用途：建立最小 WebSocket 长连接，用于验证实时通信入口。
+用途：建立玩家 WebSocket 长连接，用于验证实时通信入口和玩家 token 鉴权。
 
 连接地址：
 
 ```text
-ws://localhost:8080/ws
+ws://localhost:8080/ws?token=玩家token
 ```
 
-鉴权：Day 19 暂不需要 token。
+鉴权：需要玩家 token，通过 `token` query 参数传入。
 
 连接成功后，服务端会主动发送欢迎消息：
 
@@ -260,17 +260,29 @@ ws://localhost:8080/ws
 {
   "type": "welcome",
   "content": "connected to game realtime server",
-  "server_time": "2026-06-22T10:00:00+08:00"
+  "server_time": "2026-06-22T10:00:00+08:00",
+  "player_id": 1,
+  "username": "player01"
 }
 ```
 
 客户端发送文本消息后，服务端会原样回显。
 
+主要错误：
+
+```text
+40121 websocket token missing
+40122 invalid websocket token
+40331 player token required
+```
+
 说明：
 
 ```text
-该接口是实时服务主线的最小连接验证。
-Day 19 暂不做 JWT 鉴权、玩家连接绑定、房间广播和心跳。
+该接口是实时服务主线的玩家连接验证。
+Day 20 已要求玩家 token，管理员 token 不能连接该玩家 WebSocket。
+当前暂不做玩家连接绑定、房间广播和心跳。
+本地学习阶段使用 query 参数传 token；不要在日志里打印完整 token。
 ```
 
 ## 在线状态模块
