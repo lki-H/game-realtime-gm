@@ -7,17 +7,19 @@ import (
 	"time"
 
 	tokenauth "game-realtime-gm/backend/internal/auth"
+	realtimews "game-realtime-gm/backend/internal/ws"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
 
 type WSMessage struct {
-	Type       string    `json:"type"`
-	Content    string    `json:"content,omitempty"`
-	ServerTime time.Time `json:"server_time"`
-	PlayerID   int64     `json:"player_id,omitempty"`
-	Username   string    `json:"username,omitempty"`
+	Type          string    `json:"type"`
+	Content       string    `json:"content,omitempty"`
+	ServerTime    time.Time `json:"server_time"`
+	PlayerID      int64     `json:"player_id,omitempty"`
+	Username      string    `json:"username,omitempty"`
+	OnlinePlayers int       `json:"online_players,omitempty"`
 }
 
 var wsUpgrader = websocket.Upgrader{
@@ -28,7 +30,7 @@ var wsUpgrader = websocket.Upgrader{
 	},
 }
 
-func WebSocketEcho(jwtSecret string) gin.HandlerFunc {
+func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, ok := websocketPlayerClaims(c, jwtSecret)
 		if !ok {
@@ -42,16 +44,31 @@ func WebSocketEcho(jwtSecret string) gin.HandlerFunc {
 		}
 		defer conn.Close()
 
+		client := &realtimews.Client{
+			PlayerID:    claims.PlayerID,
+			Username:    claims.Username,
+			Conn:        conn,
+			ConnectedAt: time.Now(),
+		}
+
+		oldConn := wsManager.Register(client)
+		if oldConn != nil {
+			_ = oldConn.Close()
+			log.Printf("websocket replaced old connection: player_id=%d username=%s", claims.PlayerID, claims.Username)
+		}
+		defer wsManager.Unregister(claims.PlayerID, conn)
+
 		remoteAddr := conn.RemoteAddr().String()
-		log.Printf("websocket connected: player_id=%d username=%s remote=%s", claims.PlayerID, claims.Username, remoteAddr)
+		log.Printf("websocket connected: player_id=%d username=%s remote=%s online_players=%d", claims.PlayerID, claims.Username, remoteAddr, wsManager.Count())
 		defer log.Printf("websocket disconnected: player_id=%d username=%s remote=%s", claims.PlayerID, claims.Username, remoteAddr)
 
 		welcome := WSMessage{
-			Type:       "welcome",
-			Content:    "connected to game realtime server",
-			ServerTime: time.Now(),
-			PlayerID:   claims.PlayerID,
-			Username:   claims.Username,
+			Type:          "welcome",
+			Content:       "connected to game realtime server",
+			ServerTime:    time.Now(),
+			PlayerID:      claims.PlayerID,
+			Username:      claims.Username,
+			OnlinePlayers: wsManager.Count(),
 		}
 
 		if err := conn.WriteJSON(welcome); err != nil {

@@ -260,9 +260,10 @@ ws://localhost:8080/ws?token=玩家token
 {
   "type": "welcome",
   "content": "connected to game realtime server",
-  "server_time": "2026-06-22T10:00:00+08:00",
+  "server_time": "2026-06-23T10:00:00+08:00",
   "player_id": 1,
-  "username": "player01"
+  "username": "player01",
+  "online_players": 1
 }
 ```
 
@@ -281,7 +282,11 @@ ws://localhost:8080/ws?token=玩家token
 ```text
 该接口是实时服务主线的玩家连接验证。
 Day 20 已要求玩家 token，管理员 token 不能连接该玩家 WebSocket。
-当前暂不做玩家连接绑定、房间广播和心跳。
+Day 21 已将玩家连接注册到 Go 进程内存连接管理器。
+online_players 表示当前 Go 进程内管理器记录的在线玩家连接数量。
+同一个玩家重复连接时，旧连接会被新连接替换。
+当前暂不做 Redis 在线续期、房间广播和心跳。
+服务重启后，内存连接状态会清空。
 本地学习阶段使用 query 参数传 token；不要在日志里打印完整 token。
 ```
 
