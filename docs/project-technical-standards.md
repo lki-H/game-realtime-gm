@@ -124,12 +124,15 @@ Go 实时游戏服务与 GM 运营后台
 - Redis 实时状态
 - JWT 鉴权
 - WebSocket 长连接
-- 房间系统
-- 匹配队列
-- 排行榜
+- 共斗 PVE 小队房间
+- PVE 任务匹配队列
+- 任务副本生命周期
+- 任务结算与排行榜
 - GM 后台
 - Docker Compose
 - 测试、日志、压测、pprof
+
+后续业务语义优先向“共斗 PVE 游戏后台与实时服务基础”收束。项目仍然保持普通 Go 后端工程能力为底座，不在当前阶段强行引入 UDP/KCP/QUIC、战斗服拆分、跨服、滚服或灰度发布。
 
 ## 总体架构原则
 
@@ -724,9 +727,9 @@ GM 权限后期单独做 RBAC。
 
 ## WebSocket 规划规范
 
-WebSocket 暂时不做，后期进入实时服务阶段再做。
+项目已经进入 WebSocket 实时服务阶段。
 
-后期结构建议：
+后续结构建议：
 
 ```text
 internal/ws/
@@ -752,21 +755,40 @@ WebSocket 连接建立流程：
 
 不要在一开始就做复杂分布式网关。
 
-## 房间与匹配规划规范
+## 共斗 PVE 小队与匹配规划规范
 
-后期房间模块建议：
+后期小队房间和任务匹配模块建议：
 
 ```text
-internal/room/
+internal/squad/
 internal/matchmaking/
+internal/mission/
 ```
 
-房间状态可以先内存维护，再同步 Redis。
+小队房间状态可以先内存维护，再同步 Redis。
+
+小队房间优先覆盖：
+
+```text
+创建小队
+加入小队
+退出小队
+队长
+成员列表
+准备状态
+小队状态广播
+```
 
 匹配队列优先使用 Redis：
 
 ```text
 matchmaking:queue:normal
+```
+
+任务副本生命周期优先使用简单状态：
+
+```text
+waiting -> ready -> running -> finished
 ```
 
 排行榜使用 Redis ZSet：
@@ -775,7 +797,7 @@ matchmaking:queue:normal
 rank:score
 ```
 
-长期战绩必须落 PostgreSQL。
+任务记录、结算记录和长期战绩必须落 PostgreSQL。
 
 ## 日志规范
 
@@ -919,6 +941,9 @@ docs/adr/
 - 高并发压测指标
 - 完整监控体系
 - 游戏服务器集群
+- UDP / KCP / QUIC
+- 商业级战斗状态同步
+- 跨服、滚服、灰度发布
 
 ## 项目演进路线
 
@@ -935,10 +960,10 @@ Day 11-18：
 WebSocket、心跳、在线状态、消息格式
 
 Day 19-28：
-房间系统、房间广播、房间状态
+WebSocket 连接管理、小队房间、小队状态广播
 
 Day 29-35：
-匹配队列、结算、防重复、排行榜
+PVE 任务匹配、任务副本生命周期、结算、防重复、排行榜
 
 Day 36-45：
 React GM 后台

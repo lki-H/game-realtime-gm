@@ -24,7 +24,7 @@ func New(db *pgxpool.Pool, redisClient *redis.Client, cfg config.Config) http.Ha
 	wsManager := ws.NewManager()
 
 	r.GET("/health", handler.Health)
-	r.GET("/ws", handler.WebSocketEcho(cfg.JWTSecret, wsManager))
+	r.GET("/ws", handler.WebSocketEcho(cfg.JWTSecret, wsManager, redisClient))
 
 	api := r.Group("/api")
 	api.POST("/register", authHandler.Register)

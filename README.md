@@ -1,15 +1,17 @@
 # Go 实时游戏服务与 GM 运营后台
 
-这是一个持续迭代中的 Go 后端学习项目，目标是模拟游戏业务里的玩家服务、在线状态和 GM 管理后台能力。
+这是一个持续迭代中的 Go 后端学习项目，目标是模拟游戏业务里的玩家服务、在线状态、实时连接和 GM 管理后台能力。
 
-项目当前重点放在后端工程基础和 GM 后台业务闭环：玩家注册登录、JWT 鉴权、管理员登录、管理员权限校验、玩家查询、封禁解封、GM 操作日志记录、日志筛选和日志详情查询。
+项目当前重点放在后端工程基础和游戏后台业务闭环：玩家注册登录、JWT 鉴权、管理员登录、管理员权限校验、玩家查询、封禁解封、GM 操作日志、WebSocket 玩家长连接、Redis 在线状态和接口文档。
+
+后续业务方向会逐步收束到“共斗 PVE 游戏后台与实时服务基础”：先在单体 Go 服务中实现小队房间、任务匹配、副本生命周期、结算记录和 GM 观察能力，再把 UDP/KCP、状态同步、战斗服拆分等内容作为二期研究方向。
 
 ## 项目定位
 
-- 面向方向：Go 后端实习、游戏服务端实习。
-- 业务场景：游戏玩家基础服务 + GM 运营管理后台。
+- 面向方向：Go 后端实习、游戏服务端实习、游戏后台/运营工具方向实习。
+- 业务场景：游戏玩家基础服务 + GM 运营管理后台 + 共斗 PVE 实时服务基础。
 - 学习方式：按 `docs/dayXX-plan.md` 每天拆分一个小需求推进。
-- 当前进度：已完成 Day 01 到 Day 15。
+- 当前进度：已推进到 Day 22，正在完善 WebSocket 玩家长连接和 Redis 在线状态。
 
 ## 技术栈
 
@@ -22,6 +24,7 @@
 - bcrypt
 - pgx
 - go-redis
+- WebSocket
 
 ## 当前功能
 
@@ -37,6 +40,17 @@
 - Redis 在线心跳
 - 在线状态查询
 - 被封禁玩家禁止登录
+
+### 实时连接侧
+
+- WebSocket 玩家 token 鉴权
+- 管理员 token 禁止连接玩家 WebSocket
+- 玩家连接注册到内存连接管理器
+- 同一玩家重复连接时，新连接替换旧连接
+- welcome 消息返回当前进程在线连接数
+- WebSocket 连接成功后写入 Redis 在线状态
+- WebSocket 连接保持时续期 Redis TTL
+- WebSocket 断开后停止续期，等待 Redis key 自动过期
 
 ### GM 管理侧
 
@@ -70,7 +84,8 @@ game-realtime-gm/
 │       ├── handler/         # HTTP handler
 │       ├── middleware/      # 玩家和管理员鉴权中间件
 │       ├── model/           # 业务模型
-│       └── router/          # 路由注册
+│       ├── router/          # 路由注册
+│       └── ws/              # WebSocket 连接管理
 ├── deploy/                  # Docker Compose 环境
 ├── docs/                    # 学习计划、项目文档、交接文档
 └── frontend/                # 预留前端管理端目录
@@ -194,6 +209,9 @@ POST /api/admin/players/:id/ban
 POST /api/admin/players/:id/unban
 GET  /api/admin/operation-logs
 GET  /api/admin/operation-logs/:id
+GET  /api/admin/dashboard/summary
+GET  /api/admin/dashboard/recent-operation-logs
+GET  /ws
 ```
 
 ## 学习过程记录
@@ -204,10 +222,16 @@ GET  /api/admin/operation-logs/:id
 docs/day01-plan.md
 docs/day02-plan.md
 ...
-docs/day15-plan.md
+docs/day22-plan.md
 ```
 
 这些文档记录了从基础项目搭建到 GM 后台核心能力的逐步实现过程，适合展示项目的学习路径、需求拆解和问题排查过程。
+
+项目方向说明见：
+
+```text
+docs/project-direction-pve.md
+```
 
 ## 本地验证
 
@@ -239,16 +263,21 @@ docker exec -it game_realtime_postgres psql -U game -d game_realtime
 - Go Web 后端基础能力
 - PostgreSQL 表设计和查询能力
 - Redis 在线状态能力
+- WebSocket 长连接和连接生命周期
 - JWT 鉴权和权限区分
 - GM 后台业务建模
 - 操作日志审计思路
+- 共斗 PVE 小队、匹配、任务副本等后续业务设计能力
 - Docker 本地开发环境搭建
 - 持续学习和文档化能力
 
 后续计划：
 
-- GM 后台 dashboard 统计接口
-- 操作日志筛选选项接口
-- 更完整的接口测试用例
+- WebSocket ping/pong 心跳和读写超时
+- 统一 WebSocket 消息协议
+- 连接会话 ID 和断线重连基础
+- 小队房间、准备状态和队长机制
+- PVE 任务匹配、任务副本生命周期和结算记录
+- 更完整的接口测试和 WebSocket 测试
 - 前端管理端页面
 - 服务器部署和线上演示环境

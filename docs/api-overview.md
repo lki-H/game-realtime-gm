@@ -244,7 +244,7 @@ GET /api/players/1
 
 ### GET /ws
 
-用途：建立玩家 WebSocket 长连接，用于验证实时通信入口和玩家 token 鉴权。
+用途：建立玩家 WebSocket 长连接，用于验证实时通信入口、玩家 token 鉴权、进程内连接管理和 Redis 在线状态续期。
 
 连接地址：
 
@@ -263,11 +263,26 @@ ws://localhost:8080/ws?token=玩家token
   "server_time": "2026-06-23T10:00:00+08:00",
   "player_id": 1,
   "username": "player01",
-  "online_players": 1
+  "online_players": 1,
+  "online_ttl_seconds": 120
 }
 ```
 
 客户端发送文本消息后，服务端会原样回显。
+
+连接成功后，服务端会写入 Redis 在线状态：
+
+```text
+online:player:<player_id>
+```
+
+当前 TTL 为：
+
+```text
+120 秒
+```
+
+WebSocket 连接保持期间，后端会定时续期该 Redis key。连接断开后，后端停止续期，不主动删除 key，等待 TTL 自动过期。
 
 主要错误：
 
@@ -283,9 +298,12 @@ ws://localhost:8080/ws?token=玩家token
 该接口是实时服务主线的玩家连接验证。
 Day 20 已要求玩家 token，管理员 token 不能连接该玩家 WebSocket。
 Day 21 已将玩家连接注册到 Go 进程内存连接管理器。
+Day 22 已将 WebSocket 连接和 Redis 在线状态打通。
 online_players 表示当前 Go 进程内管理器记录的在线玩家连接数量。
+online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
 同一个玩家重复连接时，旧连接会被新连接替换。
-当前暂不做 Redis 在线续期、房间广播和心跳。
+当前不主动删除 Redis 在线 key，原因是避免旧连接断开时误删新连接刚写入的在线状态。
+当前暂不做小队状态广播和 ping/pong 心跳。
 服务重启后，内存连接状态会清空。
 本地学习阶段使用 query 参数传 token；不要在日志里打印完整 token。
 ```
@@ -300,13 +318,36 @@ online_players 表示当前 Go 进程内管理器记录的在线玩家连接数�
 
 鉴权：玩家 token。
 
+Redis key：
+
+```text
+online:player:<player_id>
+```
+
+TTL：
+
+```text
+120 秒
+```
+
 响应重点：
 
 ```json
 {
   "code": 0,
-  "message": "heartbeat success"
+  "message": "heartbeat success",
+  "data": {
+    "online": true,
+    "ttl_seconds": 120
+  }
 }
+```
+
+说明：
+
+```text
+HTTP 心跳和 WebSocket 连接都会写入同一类在线状态 key。
+Day 22 之后，玩家保持 WebSocket 连接时，也会持续续期 online:player:<player_id>。
 ```
 
 ### GET /api/online/status
@@ -314,6 +355,27 @@ online_players 表示当前 Go 进程内管理器记录的在线玩家连接数�
 用途：查询在线状态。
 
 鉴权：玩家 token。
+
+响应示例：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "online": true
+  }
+}
+```
+
+说明：
+
+```text
+该接口通过检查 Redis 中 online:player:<player_id> 是否存在来判断在线状态。
+如果玩家 WebSocket 连接保持中，Day 22 的续期逻辑会让该接口返回 online=true。
+如果 WebSocket 断开，后端停止续期；在 TTL 自动过期前，该接口可能短时间仍返回 online=true。
+TTL 过期后，该接口会返回 online=false。
+```
 
 ## GM 管理模块
 

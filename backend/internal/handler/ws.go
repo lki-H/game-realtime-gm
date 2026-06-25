@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 )
 
 type WSMessage struct {
@@ -20,6 +22,7 @@ type WSMessage struct {
 	PlayerID      int64     `json:"player_id,omitempty"`
 	Username      string    `json:"username,omitempty"`
 	OnlinePlayers int       `json:"online_players,omitempty"`
+	OnlineTTL     int       `json:"online_ttl_seconds,omitempty"`
 }
 
 var wsUpgrader = websocket.Upgrader{
@@ -30,7 +33,7 @@ var wsUpgrader = websocket.Upgrader{
 	},
 }
 
-func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager) gin.HandlerFunc {
+func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, ok := websocketPlayerClaims(c, jwtSecret)
 		if !ok {
@@ -58,6 +61,23 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager) gin.HandlerF
 		}
 		defer wsManager.Unregister(claims.PlayerID, conn)
 
+		onlineCtx, stopOnlineRefresh := context.WithCancel(context.Background())
+		defer stopOnlineRefresh()
+
+		if err := refreshWebSocketOnlineStatus(onlineCtx, redisClient, claims.PlayerID); err != nil {
+			log.Printf("websocket update redis online status failed: player_id=%d err=%v", claims.PlayerID, err)
+			_ = conn.WriteJSON(WSMessage{
+				Type:       "error",
+				Content:    "update online status failed",
+				ServerTime: time.Now(),
+				PlayerID:   claims.PlayerID,
+				Username:   claims.Username,
+			})
+			return
+		}
+
+		go keepWebSocketOnlineStatus(onlineCtx, redisClient, claims.PlayerID)
+
 		remoteAddr := conn.RemoteAddr().String()
 		log.Printf("websocket connected: player_id=%d username=%s remote=%s online_players=%d", claims.PlayerID, claims.Username, remoteAddr, wsManager.Count())
 		defer log.Printf("websocket disconnected: player_id=%d username=%s remote=%s", claims.PlayerID, claims.Username, remoteAddr)
@@ -69,6 +89,7 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager) gin.HandlerF
 			PlayerID:      claims.PlayerID,
 			Username:      claims.Username,
 			OnlinePlayers: wsManager.Count(),
+			OnlineTTL:     int(onlineTTL.Seconds()),
 		}
 
 		if err := conn.WriteJSON(welcome); err != nil {
@@ -123,4 +144,25 @@ func websocketPlayerClaims(c *gin.Context, jwtSecret string) (*tokenauth.Claims,
 	}
 
 	return claims, true
+}
+
+func refreshWebSocketOnlineStatus(ctx context.Context, redisClient *redis.Client, playerID int64) error {
+	key := onlinePlayerKey(playerID)
+	return redisClient.Set(ctx, key, "1", onlineTTL).Err()
+}
+
+func keepWebSocketOnlineStatus(ctx context.Context, redisClient *redis.Client, playerID int64) {
+	ticker := time.NewTicker(onlineTTL / 2)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := refreshWebSocketOnlineStatus(ctx, redisClient, playerID); err != nil {
+				log.Printf("websocket refresh redis online status failed: player_id=%d err=%v", playerID, err)
+			}
+		}
+	}
 }

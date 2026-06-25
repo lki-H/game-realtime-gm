@@ -8,7 +8,7 @@
 
 ## 项目定位
 
-这是一个 Go 游戏后台与 GM 运营后台学习项目。
+这是一个 Go 游戏后台、GM 运营后台与共斗 PVE 实时服务基础学习项目。
 
 当前目标不是一次性做成大型商业系统，而是通过每天一个小功能，逐步训练：
 
@@ -16,17 +16,27 @@
 - Gin HTTP API
 - PostgreSQL 数据建模
 - Redis 实时状态
+- WebSocket 长连接
 - JWT 鉴权和权限隔离
 - GM 后台业务闭环
 - 操作日志审计
+- 小队房间、任务匹配、任务副本生命周期等共斗 PVE 业务基础
 - Docker Compose 本地环境
 - GitHub 持续提交和求职展示
 
 面向 HR 或面试官时，不要把项目包装成已经商用的大型游戏服务器。应如实表达为：
 
 ```text
-持续迭代中的 Go 游戏后台与 GM 运营后台学习项目。
+持续迭代中的 Go 游戏后台、GM 运营后台与共斗 PVE 实时服务基础学习项目。
 ```
+
+后续方向说明优先参考：
+
+```text
+E:\game-realtime-gm\docs\project-direction-pve.md
+```
+
+当前阶段不要把项目包装成完整商业战斗服、UDP/KCP 同步项目、跨服系统或微服务集群项目。
 
 ## 使用者学习背景
 
@@ -57,6 +67,7 @@
 E:\game-realtime-gm\README.md
 E:\game-realtime-gm\docs\learning-roadmap.md
 E:\game-realtime-gm\docs\project-technical-standards.md
+E:\game-realtime-gm\docs\project-direction-pve.md
 E:\game-realtime-gm\docs\api-overview.md
 E:\game-realtime-gm\docs\github-workflow.md
 E:\game-realtime-gm\docs\day上一天-plan.md
