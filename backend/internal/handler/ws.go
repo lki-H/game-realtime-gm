@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	tokenauth "game-realtime-gm/backend/internal/auth"
@@ -13,6 +14,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
+)
+
+const (
+	webSocketWriteWait       = 10 * time.Second
+	webSocketPongWait        = 70 * time.Second
+	webSocketPingPeriod      = 30 * time.Second
+	webSocketMaxMessageBytes = 4096
 )
 
 type WSMessage struct {
@@ -47,6 +55,14 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 		}
 		defer conn.Close()
 
+		writeMu := &sync.Mutex{}
+		conn.SetReadLimit(webSocketMaxMessageBytes)
+		_ = conn.SetReadDeadline(time.Now().Add(webSocketPongWait))
+		conn.SetPongHandler(func(appData string) error {
+			log.Printf("websocket pong received: player_id=%d username=%s data=%s", claims.PlayerID, claims.Username, appData)
+			return conn.SetReadDeadline(time.Now().Add(webSocketPongWait))
+		})
+
 		client := &realtimews.Client{
 			PlayerID:    claims.PlayerID,
 			Username:    claims.Username,
@@ -66,7 +82,7 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 
 		if err := refreshWebSocketOnlineStatus(onlineCtx, redisClient, claims.PlayerID); err != nil {
 			log.Printf("websocket update redis online status failed: player_id=%d err=%v", claims.PlayerID, err)
-			_ = conn.WriteJSON(WSMessage{
+			_ = writeWebSocketJSON(conn, writeMu, WSMessage{
 				Type:       "error",
 				Content:    "update online status failed",
 				ServerTime: time.Now(),
@@ -77,6 +93,7 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 		}
 
 		go keepWebSocketOnlineStatus(onlineCtx, redisClient, claims.PlayerID)
+		go keepWebSocketAlive(onlineCtx, conn, writeMu, claims.PlayerID, claims.Username)
 
 		remoteAddr := conn.RemoteAddr().String()
 		log.Printf("websocket connected: player_id=%d username=%s remote=%s online_players=%d", claims.PlayerID, claims.Username, remoteAddr, wsManager.Count())
@@ -92,7 +109,7 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 			OnlineTTL:     int(onlineTTL.Seconds()),
 		}
 
-		if err := conn.WriteJSON(welcome); err != nil {
+		if err := writeWebSocketJSON(conn, writeMu, welcome); err != nil {
 			log.Printf("websocket write welcome failed: %v", err)
 			return
 		}
@@ -101,14 +118,14 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 			messageType, message, err := conn.ReadMessage()
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-					log.Printf("websocket read failed: %v", err)
+					log.Printf("websocket read failed: player_id=%d err=%v", claims.PlayerID, err)
 				}
 				return
 			}
 
 			log.Printf("websocket received from player_id=%d: %s", claims.PlayerID, string(message))
 
-			if err := conn.WriteMessage(messageType, message); err != nil {
+			if err := writeWebSocketMessage(conn, writeMu, messageType, message); err != nil {
 				log.Printf("websocket write echo failed: %v", err)
 				return
 			}
@@ -165,4 +182,53 @@ func keepWebSocketOnlineStatus(ctx context.Context, redisClient *redis.Client, p
 			}
 		}
 	}
+}
+
+func keepWebSocketAlive(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, playerID int64, username string) {
+	ticker := time.NewTicker(webSocketPingPeriod)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := writeWebSocketPing(conn, writeMu); err != nil {
+				log.Printf("websocket ping failed: player_id=%d username=%s err=%v", playerID, username, err)
+				_ = conn.Close()
+				return
+			}
+		}
+	}
+}
+
+func writeWebSocketJSON(conn *websocket.Conn, writeMu *sync.Mutex, value any) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+
+	if err := conn.SetWriteDeadline(time.Now().Add(webSocketWriteWait)); err != nil {
+		return err
+	}
+	return conn.WriteJSON(value)
+}
+
+func writeWebSocketMessage(conn *websocket.Conn, writeMu *sync.Mutex, messageType int, message []byte) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+
+	if err := conn.SetWriteDeadline(time.Now().Add(webSocketWriteWait)); err != nil {
+		return err
+	}
+	return conn.WriteMessage(messageType, message)
+}
+
+func writeWebSocketPing(conn *websocket.Conn, writeMu *sync.Mutex) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+
+	deadline := time.Now().Add(webSocketWriteWait)
+	if err := conn.SetWriteDeadline(deadline); err != nil {
+		return err
+	}
+	return conn.WriteControl(websocket.PingMessage, []byte("ping"), deadline)
 }

@@ -284,6 +284,35 @@ online:player:<player_id>
 
 WebSocket 连接保持期间，后端会定时续期该 Redis key。连接断开后，后端停止续期，不主动删除 key，等待 TTL 自动过期。
 
+Day 23 起，服务端会为 WebSocket 连接增加 ping/pong 心跳与读写超时：
+
+```text
+服务端每 30 秒发送一次 ping。
+客户端返回 pong 后，服务端刷新读超时时间。
+如果长期收不到 pong，ReadMessage 会超时返回错误，连接会退出。
+连接退出后，进程内连接管理器会注销该玩家连接，Redis 在线状态续期也会停止。
+```
+
+当前限制：
+
+```text
+单条 WebSocket 消息最大 4096 字节。
+WebSocket 写操作设置 10 秒写超时。
+pong 等待时间为 70 秒。
+```
+
+Day 23 验证重点：
+
+```text
+1. 使用玩家登录接口获取玩家 token。
+2. 用 Apifox 或其他 WebSocket 客户端连接 ws://localhost:8080/ws?token=玩家token。
+3. 连接成功后确认收到 welcome 消息。
+4. 保持连接 30 秒以上，观察后端日志是否出现 websocket pong received。
+5. 发送文本消息，例如 hello day23，确认服务端仍然原样回显。
+6. 进入 Redis 查看 online:player:<player_id> 的 TTL，确认连接保持时 TTL 会被续期。
+7. 关闭 WebSocket 连接后，确认后端日志出现 websocket disconnected，Redis key 等待 TTL 自动过期。
+```
+
 主要错误：
 
 ```text
@@ -299,11 +328,12 @@ WebSocket 连接保持期间，后端会定时续期该 Redis key。连接断开
 Day 20 已要求玩家 token，管理员 token 不能连接该玩家 WebSocket。
 Day 21 已将玩家连接注册到 Go 进程内存连接管理器。
 Day 22 已将 WebSocket 连接和 Redis 在线状态打通。
+Day 23 已为 WebSocket 增加 ping/pong 心跳、读超时、写超时和写锁。
 online_players 表示当前 Go 进程内管理器记录的在线玩家连接数量。
 online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
 同一个玩家重复连接时，旧连接会被新连接替换。
 当前不主动删除 Redis 在线 key，原因是避免旧连接断开时误删新连接刚写入的在线状态。
-当前暂不做小队状态广播和 ping/pong 心跳。
+当前暂不做小队状态广播和统一业务消息协议。
 服务重启后，内存连接状态会清空。
 本地学习阶段使用 query 参数传 token；不要在日志里打印完整 token。
 ```
