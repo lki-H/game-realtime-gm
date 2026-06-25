@@ -93,6 +93,71 @@ GM 运营后台
 | 结算 | 任务结算 | 表达耗时、奖励、结果、积分 |
 | 排行榜 | 战绩/通关/积分排行榜 | 更贴近运营展示和玩家成长 |
 
+## 参考项目与吸收方式
+
+后续参考项目分成两类。
+
+第一类是开源架构参考，用来理解游戏后端、实时连接、房间、匹配、排行榜、后台和工程结构。
+
+第二类是真实业务模型参考，用来理解商业游戏后台平台里常见的 Party、Lobby、Session、Matchmaking、Game Session、Player Session 等概念。
+
+当前阶段只吸收概念、命名、状态流转和简化模型，不引入完整框架、云服务、Kubernetes、微服务集群或商业平台 SDK。
+
+### 开源架构参考
+
+| 项目 | 适合学习 | 本项目怎么吸收 | 当前不要照抄 |
+| --- | --- | --- | --- |
+| [Nakama](https://heroiclabs.com/docs/nakama/) | 账号、实时连接、Party、Matchmaker、排行榜、Console | 学习游戏后端功能边界；将 Party 映射为小队，将 Matchmaker 映射为 PVE 匹配 | 不照抄完整平台架构、多语言 runtime、复杂 API 网关 |
+| [Pitaya](https://pitaya.readthedocs.io/) | Go 游戏服务器、TCP/WebSocket、Session、Route、Group、Push | 学习 Group 如何表达小队广播，学习 Session 绑定玩家和服务端主动推送 | 不引入 etcd、NATS、RPC 集群 |
+| [Colyseus](https://docs.colyseus.io/) | Room 生命周期、状态同步、匹配、maxClients | 学习 onCreate、onJoin、onLeave、onDispose；用来设计小队和任务副本生命周期 | 不换成 Node/TypeScript，不做完整状态同步框架 |
+| [Open Match](https://open-match.dev/site/docs/) | Ticket、Pool、MatchProfile、MatchFunction、Director | 学习匹配流程模型；把 Ticket 简化为 Redis 匹配队列中的玩家或小队请求 | 不部署 Open Match，不拆多个匹配服务 |
+| [Agones](https://agones.dev/site/docs/) | GameServer 生命周期、分配、玩家容量、Fleet | 学习任务副本/战斗服的生命周期概念 | 不上 Kubernetes，不使用 CRD/Fleet/GameServerAllocation |
+| [Gin-Vue-Admin](https://gin-vue-admin.com/guide/introduce/project.html) | GM 后台、菜单、RBAC、API 权限 | 后期做 React GM 后台和权限管理时参考 | 不照搬大后台框架 |
+| [go-clean-template](https://github.com/evrone/go-clean-template) | Go 分层、配置、测试、Docker | 学习工程结构和职责拆分 | 不过早上复杂 Clean Architecture |
+
+### 真实业务模型参考
+
+| 平台/项目 | 适合学习 | 本项目怎么吸收 | 当前不要照抄 |
+| --- | --- | --- | --- |
+| [AccelByte Gaming Services](https://docs.accelbyte.io/gaming-services/modules/multiplayer/parties-presence/) | Party、Presence、Session、Matchmaking、Dedicated Server Manager | 学习“小队 -> 匹配 -> 会话/任务副本 -> 分配服务器”的业务链 | 不接入商业平台 |
+| [PlayFab Multiplayer](https://learn.microsoft.com/en-us/gaming/playfab/multiplayer/matchmaking/) | Matchmaking Queue、Match Size、Server Allocation | 学习匹配队列、最小/最大人数、匹配后分配服务器的表达方式 | 不接入 PlayFab，不做云服务器自动分配 |
+| [AWS GameLift FlexMatch](https://docs.aws.amazon.com/gameliftservers/latest/flexmatchguide/match-intro.html) | 匹配规则、Game Session、Player Session | 学习成熟匹配系统怎么描述规则和玩家会话 | 不上 AWS GameLift，不做复杂规则引擎 |
+| [Epic Online Services](https://dev.epicgames.com/docs/game-services/lobbies-and-sessions) | Lobby、Session、Presence | 学习 Lobby 和 Session 的区别 | 不接入 EOS，不做跨平台账号体系 |
+| [Hathora](https://hathora.dev/docs) | Room、server process、区域部署 | 学习“一个房间/任务实例对应一个服务进程”的部署概念 | 当前不拆独立战斗服进程 |
+| [Pragma Engine](https://pragma.gg/) | Player Data、Party、Matchmaking、Game Instance | 学习玩家数据、队伍、游戏实例之间的业务关系 | 不照搬商业后端平台架构 |
+| [Centrifugo](https://centrifugal.dev/) | Channel、Presence、Pub/Sub、实时推送 | 学习 `channel -> squad:<id>`、presence、join/leave、小队广播模型 | 当前不引入 Centrifugo 服务 |
+| [Casbin](https://casbin.org/docs/overview) | RBAC/ABAC 权限模型 | 后期优化 GM 权限模型 | 当前不急着引入复杂权限策略语言 |
+| [Prometheus Go Client](https://prometheus.io/docs/guides/go-application/) / [OpenTelemetry Go](https://opentelemetry.io/docs/languages/go/) | 指标、链路追踪、可观测性 | Day 46 以后为在线人数、WebSocket 连接数、接口耗时补工程化展示 | 当前不提前做完整监控体系 |
+
+### 概念映射
+
+| 外部概念 | 本项目概念 |
+| --- | --- |
+| Party / Lobby / Group | 小队房间 |
+| Presence | 在线状态、连接状态 |
+| Channel | 小队广播频道 |
+| Ticket | 匹配票据 |
+| Matchmaking Queue / Pool | PVE 任务匹配队列 |
+| Match / Game Session / Room | 任务副本实例 |
+| Player Session | 玩家在任务副本内的参与记录 |
+| GameServer | 二期战斗服/任务服概念 |
+| Fleet / Allocation | 二期部署和调度概念 |
+
+### 参考项目落地规则
+
+这些参考项目后续主要落到 4 个方向：
+
+| 后续功能 | 优先参考 | 本项目落地方式 |
+| --- | --- | --- |
+| WebSocket 连接生命周期 | Pitaya、Centrifugo | 学习 Session、Channel、Presence 的表达方式，当前只保留单体连接管理、ping/pong 和在线状态 |
+| 小队房间 | Nakama Party、Colyseus Room、Centrifugo Channel | 设计 `squad`、成员、队长、准备状态和 `squad:<id>` 广播语义 |
+| PVE 任务匹配 | Open Match、PlayFab、GameLift FlexMatch | 设计简化版 `matchmaking_ticket`、匹配队列和最小/最大人数规则 |
+| 任务副本生命周期 | Colyseus Room、Agones GameServer、Hathora Room | 设计 `mission_instance` 的 waiting、ready、running、finished 状态 |
+
+当前阶段每次只吸收一个概念并落到可运行的小功能里。
+
+不要把参考项目当成“要照搬的目标架构”。它们更像是命名词典和业务边界样本，用来帮助你把自己的项目讲得更像真实游戏后端。
+
 ## 推荐后续 Day 路线
 
 ### Day 23：WebSocket ping/pong 心跳与读写超时

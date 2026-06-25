@@ -70,7 +70,7 @@ E:\game-realtime-gm\docs\project-technical-standards.md
 E:\game-realtime-gm\docs\project-direction-pve.md
 E:\game-realtime-gm\docs\api-overview.md
 E:\game-realtime-gm\docs\github-workflow.md
-E:\game-realtime-gm\docs\day上一天-plan.md
+E:\game-realtime-gm\docs\day\day上一天-plan.md
 ```
 
 如果上下文不安全、跨天太多、或旧对话压缩可能影响判断，再读取：
@@ -87,13 +87,14 @@ E:\game-realtime-gm\docs\codex-context.md
 每次生成每日计划时，必须在项目文档目录创建或更新对应文件：
 
 ```text
-E:\game-realtime-gm\docs\dayXX-plan.md
+E:\game-realtime-gm\docs\day\dayXX-plan.md
 ```
 
 命名规则：
 
 - `XX` 使用两位数字，例如 `day02-plan.md`、`day03-plan.md`、`day10-plan.md`。
-- 文件放在项目根目录下的 `docs/` 目录。
+- 文件统一放在项目根目录下的 `docs/day/` 目录。
+- 旧的 Day 文档也已经统一归档到 `docs/day/`，以后不要再生成到 `docs/` 根目录。
 - 如果当天计划文件已经存在，先读取已有内容，再在不丢失重要信息的前提下更新。
 - 不能只在聊天窗口输出计划而不写入文件，除非用户明确说“只在聊天里说，不要创建文件”。
 
@@ -452,7 +453,7 @@ git status
 确认没有敏感文件后，选择性添加当天修改：
 
 ```powershell
-git add backend docs/dayXX-plan.md README.md docs/api-overview.md
+git add backend docs/day/dayXX-plan.md README.md docs/api-overview.md
 ```
 
 如果当天没有修改某些文件，不要强行添加。不要无脑使用 `git add .`。
@@ -588,7 +589,7 @@ push 结果
 
 - README
 - docs/api-overview.md
-- docs/dayXX-plan.md
+- docs/day/dayXX-plan.md
 - 清晰的 GitHub commit 记录
 - 可运行的 Docker Compose 环境
 - `go test ./...` 通过

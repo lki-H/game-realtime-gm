@@ -98,7 +98,7 @@ game_realtime_redis
 
 ```powershell
 cd E:\game-realtime-gm
-git add backend deploy README.md docs/api-overview.md docs/dayXX-plan.md
+git add backend deploy README.md docs/api-overview.md docs/day/dayXX-plan.md
 ```
 
 如果当天只改了某些文件，就只添加那些文件。
@@ -106,7 +106,7 @@ git add backend deploy README.md docs/api-overview.md docs/dayXX-plan.md
 例如 Day16 只改了后端和 Day16 文档：
 
 ```powershell
-git add backend docs/day16-plan.md docs/api-overview.md README.md
+git add backend docs/day/day16-plan.md docs/api-overview.md README.md
 ```
 
 如果 `README.md` 和 `api-overview.md` 没变，不需要添加它们。
@@ -262,7 +262,7 @@ README.md
 backend/
 deploy/
 docs/api-overview.md
-docs/dayXX-plan.md
+docs/day/dayXX-plan.md
 ```
 
 提交记录应该体现：

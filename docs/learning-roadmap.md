@@ -52,7 +52,7 @@
 
 ### 1. 项目主线
 
-项目主线就是每天的 `dayxx-plan.md`。
+项目主线就是每天的 `docs/day/dayxx-plan.md`。
 
 它负责告诉你当天要做什么、怎么做、改哪些文件、怎么验证。
 
@@ -93,13 +93,62 @@ players 表通过 UNIQUE 约束保证 username 不重复。
 
 这段复盘以后就是简历和面试表达素材。
 
+## 参考项目怎么辅助学习
+
+后续会参考一些成熟项目和商业平台，但参考它们不是为了照抄架构，而是为了学习真实工作里的业务语言。
+
+你可以把它们当成三类材料：
+
+| 类型 | 代表项目 | 你主要学什么 |
+| --- | --- | --- |
+| 游戏后端功能边界 | Nakama、Pitaya、Colyseus | 账号、实时连接、房间、小队、匹配、排行榜、服务端推送 |
+| 真实商业业务模型 | AccelByte、PlayFab、AWS GameLift、Epic Online Services、Pragma | Party、Presence、Matchmaking、Game Session、Player Session 怎么命名和串起来 |
+| 工程化与后台参考 | Gin-Vue-Admin、go-clean-template、go-zero、Centrifugo、Prometheus、OpenTelemetry | 后台权限、工程结构、实时推送、监控指标、链路观察 |
+
+当前阶段的吸收方式：
+
+```text
+先学概念
+        ↓
+映射成本项目的小功能
+        ↓
+写入 docs/day/dayXX-plan.md
+        ↓
+做出可运行、可测试、可解释的最小版本
+```
+
+例如：
+
+| 外部概念 | 本项目怎么学 |
+| --- | --- |
+| Party / Lobby | 小队房间 `squad` |
+| Presence | Redis 在线状态和 WebSocket 连接状态 |
+| Channel / Group | 小队状态广播频道 `squad:<squad_id>` |
+| Ticket | PVE 匹配票据 |
+| Game Session / Room | 任务副本实例 `mission_instance` |
+
+现在不要做：
+
+```text
+不要接入商业平台 SDK。
+不要部署 Open Match、Agones、GameLift。
+不要为了像大项目而提前拆微服务。
+不要在主线项目里直接塞 UDP/KCP/QUIC 战斗同步。
+```
+
+更适合你的路线是：
+
+```text
+用小功能理解大系统的一个概念。
+```
+
 ## 每天学习节奏
 
 每天建议分成三段。
 
 ### 第一段：做项目
 
-按照当天 `dayxx-plan.md` 完成任务。
+按照当天 `docs/day/dayxx-plan.md` 完成任务。
 
 重点是把最小闭环跑通。
 
@@ -170,6 +219,7 @@ router.go 在请求流转里负责什么？
 | WebSocket | 长连接、消息发送、连接状态、断开处理 | https://developer.mozilla.org/en-US/docs/Web/API/WebSocket |
 | Go 测试 | `go test`、单元测试、表驱动测试 | https://go.dev/doc/tutorial/add-a-test |
 | React | 组件、状态、事件、表单、接口请求 | https://react.dev/learn |
+| 游戏后端参考 | Party、Presence、Matchmaking、Game Session、小队/房间模型 | `docs/project-direction-pve.md` 和 `docs/project-technical-standards.md` |
 
 ## 按项目阶段学习
 
@@ -286,6 +336,8 @@ GenerateToken
 - 心跳机制
 - 在线状态
 - 连接和玩家 ID 的映射关系
+- ping/pong 和读写超时
+- 单连接并发写保护
 
 你要能画出：
 
@@ -299,6 +351,8 @@ GenerateToken
 建立 WebSocket 连接
         ↓
 记录 player_id -> connection
+        ↓
+服务端定时 ping，客户端返回 pong
         ↓
 收发实时消息
 ```
@@ -319,6 +373,15 @@ GenerateToken
 
 重点不是做复杂战斗规则，而是理解多人共斗 PVE 里的状态管理。
 
+这一阶段参考项目的正确用法：
+
+```text
+看 Nakama 的 Party 概念
+看 Colyseus 的 Room 生命周期
+看 Pitaya/Centrifugo 的 Group/Channel 广播
+然后只实现本项目需要的小队成员、队长、准备状态和广播。
+```
+
 ### 阶段 6：PVE 任务匹配、任务副本结算、排行榜
 
 对应第 5 周。
@@ -338,6 +401,14 @@ GenerateToken
 ```text
 Redis 负责实时和高频状态
 PostgreSQL 负责长期可靠数据
+```
+
+这一阶段参考项目的正确用法：
+
+```text
+看 Open Match 的 Ticket/Pool/MatchProfile
+看 PlayFab/GameLift 的 Matchmaking Queue、Game Session、Player Session
+然后只实现简化版匹配票据、Redis 队列、任务副本记录和结算记录。
 ```
 
 ### 阶段 7：React GM 后台

@@ -1,4 +1,4 @@
-# Go 实时游戏服务与 GM 运营后台
+# Go 游戏后台、GM 运营后台与共斗 PVE 实时服务基础
 
 这是一个持续迭代中的 Go 后端学习项目，目标是模拟游戏业务里的玩家服务、在线状态、实时连接和 GM 管理后台能力。
 
@@ -10,8 +10,26 @@
 
 - 面向方向：Go 后端实习、游戏服务端实习、游戏后台/运营工具方向实习。
 - 业务场景：游戏玩家基础服务 + GM 运营管理后台 + 共斗 PVE 实时服务基础。
-- 学习方式：按 `docs/dayXX-plan.md` 每天拆分一个小需求推进。
-- 当前进度：已推进到 Day 22，正在完善 WebSocket 玩家长连接和 Redis 在线状态。
+- 学习方式：按 `docs/day/dayXX-plan.md` 每天拆分一个小需求推进。
+- 当前进度：已推进到 Day 23，正在完善 WebSocket ping/pong 心跳、读写超时和连接生命周期。
+
+## 参考方向
+
+项目后续参考分成两类：
+
+```text
+开源架构参考：Nakama、Pitaya、Colyseus、Open Match、Agones、Gin-Vue-Admin 等。
+真实业务模型参考：AccelByte、PlayFab、AWS GameLift、Epic Online Services、Hathora、Pragma、Centrifugo 等。
+```
+
+这些参考只用于学习成熟项目里的命名、边界、状态流转和业务链路，不会在当前阶段直接引入完整平台、云服务、Kubernetes、微服务集群或商业 SDK。
+
+详细说明见：
+
+```text
+docs/project-direction-pve.md
+docs/project-technical-standards.md
+```
 
 ## 技术栈
 
@@ -51,6 +69,8 @@
 - WebSocket 连接成功后写入 Redis 在线状态
 - WebSocket 连接保持时续期 Redis TTL
 - WebSocket 断开后停止续期，等待 Redis key 自动过期
+- WebSocket ping/pong 心跳
+- WebSocket 读超时、写超时和单连接写锁
 
 ### GM 管理侧
 
@@ -219,10 +239,16 @@ GET  /ws
 项目保留了按天推进的学习文档：
 
 ```text
-docs/day01-plan.md
-docs/day02-plan.md
+docs/day/day01-plan.md
+docs/day/day02-plan.md
 ...
-docs/day22-plan.md
+docs/day/day23-plan.md
+```
+
+这些文件当前统一放在：
+
+```text
+docs/day/
 ```
 
 这些文档记录了从基础项目搭建到 GM 后台核心能力的逐步实现过程，适合展示项目的学习路径、需求拆解和问题排查过程。
@@ -231,6 +257,12 @@ docs/day22-plan.md
 
 ```text
 docs/project-direction-pve.md
+```
+
+长期技术规范和参考项目矩阵见：
+
+```text
+docs/project-technical-standards.md
 ```
 
 ## 本地验证
@@ -268,6 +300,7 @@ docker exec -it game_realtime_postgres psql -U game -d game_realtime
 - GM 后台业务建模
 - 操作日志审计思路
 - 共斗 PVE 小队、匹配、任务副本等后续业务设计能力
+- 从成熟游戏后端平台中提炼 Party、Presence、Matchmaking、Game Session 等概念，并映射到本项目的小队、在线状态、PVE 匹配和任务副本
 - Docker 本地开发环境搭建
 - 持续学习和文档化能力
 

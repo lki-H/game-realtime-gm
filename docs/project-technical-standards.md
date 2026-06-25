@@ -25,7 +25,7 @@ https://github.com/lki01/game-realtime-gm.git
 main
 ```
 
-以后每次生成 `docs/dayXX-plan.md` 时，文档末尾必须包含 GitHub 收尾流程。
+以后每次生成 `docs/day/dayXX-plan.md` 时，文档末尾必须包含 GitHub 收尾流程。
 
 默认节奏：
 
@@ -88,23 +88,90 @@ docs/github-workflow.md
 
 ## 参考项目与参考方式
 
-这些开源项目不要求照抄，只用于观察成熟项目如何组织工程。
+这些项目和平台不要求照抄，只用于观察成熟项目如何组织工程、命名业务对象、表达多人 PVE 后端链路。
 
-| 项目 | 参考点 | 本项目怎么吸收 |
-| --- | --- | --- |
-| [Nakama](https://github.com/heroiclabs/nakama) | 游戏后端、匹配、排行榜、实时通信、Docker 启动、数据库迁移 | 学习游戏后端功能边界和“认证、实时、排行榜、匹配”这些模块如何组合 |
-| [Pitaya](https://github.com/topfreegames/pitaya) | Go 游戏服务器框架、分布式多人游戏、服务发现、RPC | 后期理解游戏服务器、房间、网关、集群，不在前期照搬复杂分布式结构 |
-| [go-clean-template](https://github.com/evrone/go-clean-template) | Go 服务项目分层、配置、迁移、测试、Docker、避免意大利面代码 | 学习目录职责、业务逻辑独立、配置和基础设施隔离 |
-| [go-zero](https://github.com/zeromicro/go-zero) | 工程化、API 生成、service context、配置、超时、限流、监控 | 后期学习工程实践，不在当前阶段引入微服务框架 |
-| [Gin-Vue-Admin](https://gin-vue-admin.com/guide/introduce/project.html) | Gin + 前端后台、JWT、RBAC、菜单、API 权限、Swagger、Redis | 后期做 GM 后台、管理员权限、接口文档时参考 |
-| [go-redis](https://github.com/redis/go-redis) | 官方 Redis Go 客户端、连接、命令、连接池、Redis 生态 | 本项目 Redis 客户端选型和用法参考 |
-| [gin-gonic/gin](https://github.com/gin-gonic/gin) | Gin 路由、中间件、JSON、请求绑定 | 本项目 HTTP API 框架基础 |
+参考时分成两类：
 
-参考原则：
+```text
+开源架构参考：看代码结构、抽象方式、实时连接和房间/匹配模型。
+真实业务模型参考：看商业游戏后台平台如何命名 Party、Session、Matchmaking、Game Session。
+```
+
+### 开源架构参考
+
+| 项目 | 适合学习 | 本项目怎么吸收 | 当前不要照抄 |
+| --- | --- | --- | --- |
+| [Nakama](https://github.com/heroiclabs/nakama) / [docs](https://heroiclabs.com/docs/nakama/) | 账号、实时连接、队伍、匹配、排行榜、后台控制台 | 学习游戏后端功能边界，理解 Socket、Party、Matchmaker、Leaderboard、Console 如何组合 | 不照抄完整平台架构、多语言 runtime、复杂 API 网关 |
+| [Pitaya](https://github.com/topfreegames/pitaya) / [docs](https://pitaya.readthedocs.io/) | Go 游戏服务器、TCP/WebSocket、Group 广播、Session、Route、Push | 学习 Group 如何表达小队/房间广播，学习 Session 绑定玩家和服务端主动推送 | 不引入 etcd、NATS、RPC 集群、frontend/backend server 拆分 |
+| [Colyseus](https://github.com/colyseus/colyseus) / [docs](https://docs.colyseus.io/) | Room 生命周期、房间状态、状态同步、匹配 | 学习 Room、onCreate、onJoin、onLeave、onDispose、maxClients 思路 | 不换成 Node/TypeScript，不做完整状态同步框架 |
+| [Open Match](https://github.com/googleforgames/open-match) / [docs](https://open-match.dev/site/docs/) | 匹配票据、匹配池、匹配函数、Director、Assignment | 学习“匹配流程模型”，将 Ticket、Pool、MatchProfile 简化成 Redis 匹配队列 | 不部署 Open Match，不拆 Director/Evaluator/MatchFunction 服务 |
+| [Agones](https://github.com/googleforgames/agones) / [docs](https://agones.dev/site/docs/) | GameServer 生命周期、分配、玩家容量、Fleet | 学习“任务副本生命周期”和 PlayerCapacity 概念 | 不上 Kubernetes，不使用 CRD、Fleet、GameServerAllocation |
+| [Gin-Vue-Admin](https://gin-vue-admin.com/guide/introduce/project.html) | GM 后台、JWT、RBAC、菜单、API 权限、Swagger、Redis | 学习 GM 后台展示、权限组织和接口管理思路 | 不照搬大后台框架，不引入不理解的代码生成体系 |
+| [go-clean-template](https://github.com/evrone/go-clean-template) | Go 项目分层、配置、测试、Docker、工程结构 | 学习目录职责、配置隔离、测试和 Docker 组织方式 | 不过早上复杂 Clean Architecture |
+| [go-zero](https://github.com/zeromicro/go-zero) | 工程化、配置、超时、限流、监控、服务治理 | 后期学习工程实践和服务治理概念 | 当前阶段不引入微服务框架 |
+| [go-redis](https://github.com/redis/go-redis) | Redis Go 客户端、连接、命令、连接池 | 本项目 Redis 客户端选型和用法参考 | 不把 Redis 当长期可靠数据库 |
+| [gin-gonic/gin](https://github.com/gin-gonic/gin) | Gin 路由、中间件、JSON、请求绑定 | 本项目 HTTP API 框架基础 | 不为简单接口引入复杂框架封装 |
+
+### 真实业务模型参考
+
+这些平台更接近真实工作中的游戏后台业务语言。当前只学习业务模型，不引入它们的 SDK、云服务或部署体系。
+
+| 平台/项目 | 适合学习 | 本项目怎么吸收 | 当前不要照抄 |
+| --- | --- | --- | --- |
+| [AccelByte Gaming Services](https://docs.accelbyte.io/gaming-services/modules/multiplayer/parties-presence/) | Party、Presence、Session、Matchmaking、Dedicated Server Manager | 学习“小队 -> 匹配 -> 会话/任务副本 -> 分配服务器”的完整业务链 | 不接入商业平台，不复制复杂跨平台账号和会话体系 |
+| [PlayFab Multiplayer](https://learn.microsoft.com/en-us/gaming/playfab/multiplayer/matchmaking/) | Matchmaking Queue、Match Size、Server Allocation | 学习匹配队列、最小/最大人数、匹配后分配服务器的表达方式 | 不接入 PlayFab，不做云服务器自动分配 |
+| [AWS GameLift FlexMatch](https://docs.aws.amazon.com/gameliftservers/latest/flexmatchguide/match-intro.html) | 匹配规则、Game Session、Player Session、延迟/属性匹配 | 学习成熟匹配系统如何描述规则和玩家会话 | 不上 AWS GameLift，不做复杂规则引擎 |
+| [Epic Online Services](https://dev.epicgames.com/docs/game-services/lobbies-and-sessions) | Lobby、Session、Presence、跨平台联机概念 | 学习 Lobby 和 Session 的区别 | 不接入 EOS，不做跨平台账号体系 |
+| [Hathora](https://hathora.dev/docs) | Room、server process、区域部署、进程生命周期 | 学习“一个房间/任务实例对应一个服务进程”的部署概念 | 当前不拆独立战斗服进程 |
+| [Pragma Engine](https://pragma.gg/) | Player Data、Party、Matchmaking、Game Instance | 学习玩家数据、队伍、游戏实例之间的业务关系 | 不照搬商业后端平台架构 |
+| [Centrifugo](https://centrifugal.dev/) / [presence](https://centrifugal.dev/docs/server/presence) | WebSocket、Channel、Presence、Pub/Sub、实时推送 | 学习 `channel -> squad:<id>`、presence、join/leave、小队广播模型 | 当前不引入 Centrifugo 服务 |
+| [Casbin](https://casbin.org/docs/overview) | RBAC/ABAC 权限模型 | 后期优化 GM 权限，不只依赖简单 role 字符串 | 当前不急着引入复杂权限策略语言 |
+| [Prometheus Go Client](https://prometheus.io/docs/guides/go-application/) | Go 指标暴露、连接数、接口耗时 | Day 46 以后为在线人数、WebSocket 连接数、接口耗时加 `/metrics` | 当前不提前做完整监控体系 |
+| [OpenTelemetry Go](https://opentelemetry.io/docs/languages/go/) | tracing、请求链路、Gin/DB/Redis 调用观察 | 后期理解请求从 router 到 DB/Redis 的链路 | 当前不引入复杂 trace 基建 |
+
+### 参考原则
 
 - 只吸收和当前阶段有关的结构，不提前照搬大型框架。
 - 先做单体服务，后期再理解微服务、服务发现、网关、集群。
+- 参考项目优先用于“命名、边界、数据流、状态流转”，不要直接搬代码。
+- 商业平台文档优先用于理解真实工作里的业务语言，例如 Party、Session、Matchmaking、Game Session。
 - 优先保持项目可运行、可解释、可演示。
+
+### 概念映射到本项目
+
+| 外部概念 | 本项目当前/后续概念 |
+| --- | --- |
+| Party / Lobby / Group | 小队房间 `squad` |
+| Presence | 在线状态、连接状态 |
+| Channel | 小队广播频道 `squad:<squad_id>` |
+| Ticket | 匹配票据 `matchmaking_ticket` |
+| Matchmaking Queue / Pool | PVE 任务匹配队列 |
+| Match / Game Session / Room | 任务副本实例 `mission_instance` |
+| Player Session | 玩家在任务副本内的参与记录 |
+| GameServer | 二期战斗服/任务服概念，当前只用文档理解 |
+| Fleet / Allocation | 二期部署和调度概念，当前不实现 |
+
+### 技术文档映射规则
+
+以后把参考项目或新业务方向写进文档时，按下面优先级处理：
+
+| 文档 | 是否必须同步 | 同步内容 |
+| --- | --- | --- |
+| `README.md` | 必须 | 项目定位、当前进度、对外展示口径 |
+| `docs/project-direction-pve.md` | 必须 | 业务方向、参考项目、阶段边界、面试表达 |
+| `docs/project-technical-standards.md` | 必须 | 命名规范、目录规范、接口规范、Redis/PostgreSQL 规则 |
+| `docs/api-overview.md` | 按功能同步 | 只记录已经实现或正在当天验证的接口行为 |
+| `docs/learning-roadmap.md` | 按阶段同步 | 学习路线、阶段目标、需要补的基础知识 |
+| `docs/day/dayXX-plan.md` | 必须 | 从新增 Day 开始按最新方向生成，不回头重写旧 Day |
+| 旧 Day 文档 | 不主动重写 | 作为学习轨迹保留，除非内容会明显误导当前开发 |
+| 内部交接文档 | 不上传、不主动重写 | 只用于对话续接和协作上下文 |
+
+判断标准：
+
+```text
+会影响以后怎么写代码、怎么测试接口、怎么给 HR 解释项目的文档，要同步。
+只记录历史学习过程、内部上下文或旧对话压缩的文档，不要为了统一口径全部改掉。
+```
 
 ## 当前项目技术定位
 
@@ -475,8 +542,8 @@ internal/service/
 
 ```text
 /api/players
-/api/rooms
-/api/matches
+/api/squads
+/api/missions
 ```
 
 当前用户使用：
@@ -500,7 +567,7 @@ internal/service/
 | GET | 查询 | `GET /api/me` |
 | POST | 创建或动作 | `POST /api/register` |
 | PATCH | 局部更新 | `PATCH /api/me/nickname` |
-| DELETE | 删除或退出 | `DELETE /api/rooms/:id/players/me` |
+| DELETE | 删除或退出 | `DELETE /api/squads/:id/players/me` |
 
 ### 响应格式
 
@@ -562,8 +629,9 @@ PostgreSQL 保存长期可靠数据：
 - 玩家账号
 - 玩家资料
 - GM 管理员
-- 房间记录
-- 对局记录
+- 小队房间记录
+- 任务副本记录
+- 任务结算记录
 - 战绩
 - 操作日志
 
@@ -633,7 +701,8 @@ Redis 保存高频、临时、实时状态：
 - 玩家在线状态
 - WebSocket 连接状态
 - 匹配队列
-- 房间临时状态
+- 小队临时状态
+- 任务副本临时状态
 - 排行榜
 - 验证码
 - 短期 token 黑名单
@@ -647,7 +716,8 @@ Redis 保存高频、临时、实时状态：
 ```text
 online:player:<player_id>
 matchmaking:queue:<mode>
-room:<room_id>:state
+squad:<squad_id>:state
+mission:<mission_id>:state
 rank:score
 ```
 
@@ -816,7 +886,8 @@ log.Println()
 - Redis 连接成功/失败
 - 关键业务错误
 - WebSocket 连接建立/断开
-- 房间创建/结算
+- 小队创建/退出
+- 任务副本开始/结算
 
 不要在日志里打印：
 
@@ -871,7 +942,19 @@ fix: avoid duplicate handler helper
 
 ## 每日计划生成规范
 
-以后生成 `dayxx-plan.md` 时，必须遵守：
+以后生成 `dayxx-plan.md` 时，必须统一创建或更新到：
+
+```text
+E:\game-realtime-gm\docs\day\dayXX-plan.md
+```
+
+不要再生成到：
+
+```text
+E:\game-realtime-gm\docs\dayXX-plan.md
+```
+
+必须遵守：
 
 1. 先检查当前代码状态。
 2. 先跑或建议跑 `go test ./...`。
@@ -913,7 +996,7 @@ fix: avoid duplicate handler helper
 
 ```text
 docs/learning-roadmap.md
-docs/dayxx-plan.md
+docs/day/dayxx-plan.md
 ```
 
 或后期新增：
