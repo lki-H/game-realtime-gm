@@ -254,21 +254,70 @@ ws://localhost:8080/ws?token=玩家token
 
 鉴权：需要玩家 token，通过 `token` query 参数传入。
 
-连接成功后，服务端会主动发送欢迎消息：
+连接成功后，服务端会主动发送统一格式的欢迎消息：
 
 ```json
 {
-  "type": "welcome",
-  "content": "connected to game realtime server",
-  "server_time": "2026-06-23T10:00:00+08:00",
-  "player_id": 1,
-  "username": "player01",
-  "online_players": 1,
-  "online_ttl_seconds": 120
+  "type": "server.welcome",
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "player_id": 1,
+    "username": "player01",
+    "online_players": 1,
+    "online_ttl_seconds": 120
+  },
+  "server_time": "2026-06-26T10:00:00+08:00"
 }
 ```
 
-客户端发送文本消息后，服务端会原样回显。
+Day 24 起，客户端发送 WebSocket 业务消息时，需要使用统一 JSON 协议。
+
+客户端消息格式：
+
+```json
+{
+  "type": "debug.echo",
+  "request_id": "req-001",
+  "data": {
+    "text": "hello day24"
+  }
+}
+```
+
+服务端响应格式：
+
+```json
+{
+  "type": "debug.echo.result",
+  "request_id": "req-001",
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "received_type": "debug.echo",
+    "received_data": {
+      "text": "hello day24"
+    }
+  },
+  "server_time": "2026-06-26T10:00:00+08:00"
+}
+```
+
+当前支持的业务消息：
+
+| type | 说明 |
+| --- | --- |
+| `debug.echo` | 调试用 echo 消息，服务端会按统一格式返回 `debug.echo.result` |
+
+当前 WebSocket 业务消息错误：
+
+| code | message | 场景 |
+| --- | --- | --- |
+| `40024` | `invalid websocket message json` | 客户端发送的不是合法 JSON |
+| `40025` | `websocket message type required` | JSON 中缺少 `type` |
+| `40026` | `websocket only supports text json messages` | 客户端发送了非文本消息 |
+| `40424` | `unsupported websocket message type` | `type` 暂未支持 |
+| `50024` | `update online status failed` | 连接建立后更新 Redis 在线状态失败 |
 
 连接成功后，服务端会写入 Redis 在线状态：
 
@@ -306,9 +355,9 @@ Day 23 验证重点：
 ```text
 1. 使用玩家登录接口获取玩家 token。
 2. 用 Apifox 或其他 WebSocket 客户端连接 ws://localhost:8080/ws?token=玩家token。
-3. 连接成功后确认收到 welcome 消息。
+3. 连接成功后确认收到 server.welcome 消息。
 4. 保持连接 30 秒以上，观察后端日志是否出现 websocket pong received。
-5. 发送文本消息，例如 hello day23，确认服务端仍然原样回显。
+5. 发送 debug.echo JSON 消息，确认服务端返回 debug.echo.result。
 6. 进入 Redis 查看 online:player:<player_id> 的 TTL，确认连接保持时 TTL 会被续期。
 7. 关闭 WebSocket 连接后，确认后端日志出现 websocket disconnected，Redis key 等待 TTL 自动过期。
 ```
@@ -329,11 +378,12 @@ Day 20 已要求玩家 token，管理员 token 不能连接该玩家 WebSocket�
 Day 21 已将玩家连接注册到 Go 进程内存连接管理器。
 Day 22 已将 WebSocket 连接和 Redis 在线状态打通。
 Day 23 已为 WebSocket 增加 ping/pong 心跳、读超时、写超时和写锁。
+Day 24 已将 WebSocket 业务消息调整为统一 JSON 协议。
 online_players 表示当前 Go 进程内管理器记录的在线玩家连接数量。
 online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
 同一个玩家重复连接时，旧连接会被新连接替换。
 当前不主动删除 Redis 在线 key，原因是避免旧连接断开时误删新连接刚写入的在线状态。
-当前暂不做小队状态广播和统一业务消息协议。
+当前暂不做小队状态广播、PVE 匹配和任务副本消息。
 服务重启后，内存连接状态会清空。
 本地学习阶段使用 query 参数传 token；不要在日志里打印完整 token。
 ```

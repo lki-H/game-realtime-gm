@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
@@ -22,16 +23,6 @@ const (
 	webSocketPingPeriod      = 30 * time.Second
 	webSocketMaxMessageBytes = 4096
 )
-
-type WSMessage struct {
-	Type          string    `json:"type"`
-	Content       string    `json:"content,omitempty"`
-	ServerTime    time.Time `json:"server_time"`
-	PlayerID      int64     `json:"player_id,omitempty"`
-	Username      string    `json:"username,omitempty"`
-	OnlinePlayers int       `json:"online_players,omitempty"`
-	OnlineTTL     int       `json:"online_ttl_seconds,omitempty"`
-}
 
 var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
@@ -82,13 +73,7 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 
 		if err := refreshWebSocketOnlineStatus(onlineCtx, redisClient, claims.PlayerID); err != nil {
 			log.Printf("websocket update redis online status failed: player_id=%d err=%v", claims.PlayerID, err)
-			_ = writeWebSocketJSON(conn, writeMu, WSMessage{
-				Type:       "error",
-				Content:    "update online status failed",
-				ServerTime: time.Now(),
-				PlayerID:   claims.PlayerID,
-				Username:   claims.Username,
-			})
+			_ = writeWebSocketJSON(conn, writeMu, realtimews.NewErrorMessage("", 50024, "update online status failed"))
 			return
 		}
 
@@ -99,15 +84,16 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 		log.Printf("websocket connected: player_id=%d username=%s remote=%s online_players=%d", claims.PlayerID, claims.Username, remoteAddr, wsManager.Count())
 		defer log.Printf("websocket disconnected: player_id=%d username=%s remote=%s", claims.PlayerID, claims.Username, remoteAddr)
 
-		welcome := WSMessage{
-			Type:          "welcome",
-			Content:       "connected to game realtime server",
-			ServerTime:    time.Now(),
-			PlayerID:      claims.PlayerID,
-			Username:      claims.Username,
-			OnlinePlayers: wsManager.Count(),
-			OnlineTTL:     int(onlineTTL.Seconds()),
-		}
+		welcome := realtimews.NewServerMessage(
+			realtimews.MessageTypeServerWelcome,
+			"",
+			realtimews.WelcomeData{
+				PlayerID:      claims.PlayerID,
+				Username:      claims.Username,
+				OnlinePlayers: wsManager.Count(),
+				OnlineTTL:     int(onlineTTL.Seconds()),
+			},
+		)
 
 		if err := writeWebSocketJSON(conn, writeMu, welcome); err != nil {
 			log.Printf("websocket write welcome failed: %v", err)
@@ -125,9 +111,54 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 
 			log.Printf("websocket received from player_id=%d: %s", claims.PlayerID, string(message))
 
-			if err := writeWebSocketMessage(conn, writeMu, messageType, message); err != nil {
-				log.Printf("websocket write echo failed: %v", err)
-				return
+			if messageType != websocket.TextMessage {
+				errMsg := realtimews.NewErrorMessage("", 40026, "websocket only supports text json messages")
+				if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+					log.Printf("websocket write message type error failed: %v", err)
+					return
+				}
+				continue
+			}
+
+			var clientMessage realtimews.ClientMessage
+			if err := json.Unmarshal(message, &clientMessage); err != nil {
+				errMsg := realtimews.NewErrorMessage("", 40024, "invalid websocket message json")
+				if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+					log.Printf("websocket write invalid json error failed: %v", err)
+					return
+				}
+				continue
+			}
+
+			if strings.TrimSpace(clientMessage.Type) == "" {
+				errMsg := realtimews.NewErrorMessage(clientMessage.RequestID, 40025, "websocket message type required")
+				if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+					log.Printf("websocket write missing type error failed: %v", err)
+					return
+				}
+				continue
+			}
+
+			switch clientMessage.Type {
+			case realtimews.MessageTypeDebugEcho:
+				response := realtimews.NewServerMessage(
+					realtimews.MessageTypeDebugEchoResult,
+					clientMessage.RequestID,
+					realtimews.EchoData{
+						ReceivedType: clientMessage.Type,
+						ReceivedData: clientMessage.Data,
+					},
+				)
+				if err := writeWebSocketJSON(conn, writeMu, response); err != nil {
+					log.Printf("websocket write echo response failed: %v", err)
+					return
+				}
+			default:
+				errMsg := realtimews.NewErrorMessage(clientMessage.RequestID, 40424, "unsupported websocket message type")
+				if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+					log.Printf("websocket write unsupported type error failed: %v", err)
+					return
+				}
 			}
 		}
 	}
@@ -210,16 +241,6 @@ func writeWebSocketJSON(conn *websocket.Conn, writeMu *sync.Mutex, value any) er
 		return err
 	}
 	return conn.WriteJSON(value)
-}
-
-func writeWebSocketMessage(conn *websocket.Conn, writeMu *sync.Mutex, messageType int, message []byte) error {
-	writeMu.Lock()
-	defer writeMu.Unlock()
-
-	if err := conn.SetWriteDeadline(time.Now().Add(webSocketWriteWait)); err != nil {
-		return err
-	}
-	return conn.WriteMessage(messageType, message)
 }
 
 func writeWebSocketPing(conn *websocket.Conn, writeMu *sync.Mutex) error {
