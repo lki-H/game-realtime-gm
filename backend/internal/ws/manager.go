@@ -9,10 +9,12 @@ import (
 )
 
 type Client struct {
-	PlayerID    int64
-	Username    string
-	Conn        *websocket.Conn
-	ConnectedAt time.Time
+	ConnectionID string
+	PlayerID     int64
+	Username     string
+	Conn         *websocket.Conn
+	ConnectedAt  time.Time
+	LastPongAt   time.Time
 }
 
 type Manager struct {
@@ -33,14 +35,14 @@ func (m *Manager) Register(client *Client) *websocket.Conn {
 	oldClient, exists := m.clients[client.PlayerID]
 	m.clients[client.PlayerID] = client
 
-	if exists && oldClient.Conn != client.Conn {
+	if exists && oldClient.ConnectionID != client.ConnectionID {
 		return oldClient.Conn
 	}
 
 	return nil
 }
 
-func (m *Manager) Unregister(playerID int64, conn *websocket.Conn) {
+func (m *Manager) Unregister(playerID int64, connectionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -49,9 +51,26 @@ func (m *Manager) Unregister(playerID int64, conn *websocket.Conn) {
 		return
 	}
 
-	if currentClient.Conn == conn {
+	if currentClient.ConnectionID == connectionID {
 		delete(m.clients, playerID)
 	}
+}
+
+func (m *Manager) UpdateLastPong(playerID int64, connectionID string, lastPongAt time.Time) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	currentClient, exists := m.clients[playerID]
+	if !exists {
+		return false
+	}
+
+	if currentClient.ConnectionID != connectionID {
+		return false
+	}
+
+	currentClient.LastPongAt = lastPongAt
+	return true
 }
 
 func (m *Manager) Count() int {

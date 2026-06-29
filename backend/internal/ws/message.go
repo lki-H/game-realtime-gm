@@ -29,10 +29,13 @@ type ServerMessage struct {
 }
 
 type WelcomeData struct {
-	PlayerID      int64  `json:"player_id"`
-	Username      string `json:"username"`
-	OnlinePlayers int    `json:"online_players"`
-	OnlineTTL     int    `json:"online_ttl_seconds"`
+	ConnectionID  string    `json:"connection_id"`
+	PlayerID      int64     `json:"player_id"`
+	Username      string    `json:"username"`
+	ConnectedAt   time.Time `json:"connected_at"`
+	LastPongAt    time.Time `json:"last_pong_at"`
+	OnlinePlayers int       `json:"online_players"`
+	OnlineTTL     int       `json:"online_ttl_seconds"`
 }
 
 type EchoData struct {

@@ -262,14 +262,27 @@ ws://localhost:8080/ws?token=玩家token
   "code": 0,
   "message": "ok",
   "data": {
+    "connection_id": "conn_1_1780000000000000000_a1b2c3d4e5f60708",
     "player_id": 1,
     "username": "player01",
+    "connected_at": "2026-06-29T10:00:00+08:00",
+    "last_pong_at": "2026-06-29T10:00:00+08:00",
     "online_players": 1,
     "online_ttl_seconds": 120
   },
-  "server_time": "2026-06-26T10:00:00+08:00"
+  "server_time": "2026-06-29T10:00:00+08:00"
 }
 ```
+
+welcome 中连接会话字段说明：
+
+| 字段 | 说明 |
+| --- | --- |
+| `connection_id` | 当前这一次 WebSocket 连接的唯一标识，用于区分同一个玩家的新旧连接 |
+| `connected_at` | 当前连接建立时间 |
+| `last_pong_at` | 最近一次收到客户端 pong 的时间；刚连接成功时初始值等于 `connected_at` |
+| `online_players` | 当前 Go 进程内连接管理器记录的玩家连接数 |
+| `online_ttl_seconds` | Redis 在线状态 TTL 秒数 |
 
 Day 24 起，客户端发送 WebSocket 业务消息时，需要使用统一 JSON 协议。
 
@@ -318,11 +331,19 @@ Day 24 起，客户端发送 WebSocket 业务消息时，需要使用统一 JSON
 | `40026` | `websocket only supports text json messages` | 客户端发送了非文本消息 |
 | `40424` | `unsupported websocket message type` | `type` 暂未支持 |
 | `50024` | `update online status failed` | 连接建立后更新 Redis 在线状态失败 |
+| `50025` | `generate websocket connection id failed` | 服务端生成 WebSocket 连接 ID 失败 |
 
 连接成功后，服务端会写入 Redis 在线状态：
 
 ```text
 online:player:<player_id>
+```
+
+Day 25 起，Redis 在线状态的 value 保存当前 WebSocket 连接的 `connection_id`：
+
+```text
+GET online:player:1
+"conn_1_1780000000000000000_a1b2c3d4e5f60708"
 ```
 
 当前 TTL 为：
@@ -331,7 +352,7 @@ online:player:<player_id>
 120 秒
 ```
 
-WebSocket 连接保持期间，后端会定时续期该 Redis key。连接断开后，后端停止续期，不主动删除 key，等待 TTL 自动过期。
+WebSocket 连接保持期间，后端会定时续期该 Redis key，并持续写入当前连接的 `connection_id`。连接断开后，后端停止续期，不主动删除 key，等待 TTL 自动过期。
 
 Day 23 起，服务端会为 WebSocket 连接增加 ping/pong 心跳与读写超时：
 
@@ -350,16 +371,18 @@ WebSocket 写操作设置 10 秒写超时。
 pong 等待时间为 70 秒。
 ```
 
-Day 23 验证重点：
+WebSocket 验证重点：
 
 ```text
 1. 使用玩家登录接口获取玩家 token。
 2. 用 Apifox 或其他 WebSocket 客户端连接 ws://localhost:8080/ws?token=玩家token。
-3. 连接成功后确认收到 server.welcome 消息。
+3. 连接成功后确认收到 server.welcome 消息，并检查 data.connection_id 是否存在。
 4. 保持连接 30 秒以上，观察后端日志是否出现 websocket pong received。
 5. 发送 debug.echo JSON 消息，确认服务端返回 debug.echo.result。
-6. 进入 Redis 查看 online:player:<player_id> 的 TTL，确认连接保持时 TTL 会被续期。
-7. 关闭 WebSocket 连接后，确认后端日志出现 websocket disconnected，Redis key 等待 TTL 自动过期。
+6. 进入 Redis 查看 online:player:<player_id> 的 value，确认它是 connection_id。
+7. 查看 online:player:<player_id> 的 TTL，确认连接保持时 TTL 会被续期。
+8. 使用同一个玩家 token 再开一个 WebSocket 连接，确认新的 connection_id 会替换旧连接。
+9. 关闭 WebSocket 连接后，确认后端日志出现 websocket disconnected，Redis key 等待 TTL 自动过期。
 ```
 
 主要错误：
@@ -379,9 +402,10 @@ Day 21 已将玩家连接注册到 Go 进程内存连接管理器。
 Day 22 已将 WebSocket 连接和 Redis 在线状态打通。
 Day 23 已为 WebSocket 增加 ping/pong 心跳、读超时、写超时和写锁。
 Day 24 已将 WebSocket 业务消息调整为统一 JSON 协议。
+Day 25 已为每次 WebSocket 连接生成 connection_id，并将 Redis 在线状态 value 改为当前 connection_id。
 online_players 表示当前 Go 进程内管理器记录的在线玩家连接数量。
 online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
-同一个玩家重复连接时，旧连接会被新连接替换。
+同一个玩家重复连接时，旧连接会被新连接替换；连接管理器通过 connection_id 避免旧连接断开时误注销新连接。
 当前不主动删除 Redis 在线 key，原因是避免旧连接断开时误删新连接刚写入的在线状态。
 当前暂不做小队状态广播、PVE 匹配和任务副本消息。
 服务重启后，内存连接状态会清空。
@@ -427,7 +451,8 @@ TTL：
 
 ```text
 HTTP 心跳和 WebSocket 连接都会写入同一类在线状态 key。
-Day 22 之后，玩家保持 WebSocket 连接时，也会持续续期 online:player:<player_id>。
+HTTP 心跳会把在线状态写成简单在线值。
+Day 25 之后，玩家保持 WebSocket 连接时，会持续续期 online:player:<player_id>，并把 value 写成当前 WebSocket connection_id。
 ```
 
 ### GET /api/online/status

@@ -47,18 +47,30 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 		defer conn.Close()
 
 		writeMu := &sync.Mutex{}
+		connectedAt := time.Now()
+		connectionID, err := realtimews.NewConnectionID(claims.PlayerID, connectedAt)
+		if err != nil {
+			log.Printf("websocket generate connection id failed: player_id=%d err=%v", claims.PlayerID, err)
+			_ = writeWebSocketJSON(conn, writeMu, realtimews.NewErrorMessage("", 50025, "generate websocket connection id failed"))
+			return
+		}
+
 		conn.SetReadLimit(webSocketMaxMessageBytes)
 		_ = conn.SetReadDeadline(time.Now().Add(webSocketPongWait))
 		conn.SetPongHandler(func(appData string) error {
-			log.Printf("websocket pong received: player_id=%d username=%s data=%s", claims.PlayerID, claims.Username, appData)
+			lastPongAt := time.Now()
+			wsManager.UpdateLastPong(claims.PlayerID, connectionID, lastPongAt)
+			log.Printf("websocket pong received: player_id=%d username=%s connection_id=%s data=%s", claims.PlayerID, claims.Username, connectionID, appData)
 			return conn.SetReadDeadline(time.Now().Add(webSocketPongWait))
 		})
 
 		client := &realtimews.Client{
-			PlayerID:    claims.PlayerID,
-			Username:    claims.Username,
-			Conn:        conn,
-			ConnectedAt: time.Now(),
+			ConnectionID: connectionID,
+			PlayerID:     claims.PlayerID,
+			Username:     claims.Username,
+			Conn:         conn,
+			ConnectedAt:  connectedAt,
+			LastPongAt:   connectedAt,
 		}
 
 		oldConn := wsManager.Register(client)
@@ -66,30 +78,33 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 			_ = oldConn.Close()
 			log.Printf("websocket replaced old connection: player_id=%d username=%s", claims.PlayerID, claims.Username)
 		}
-		defer wsManager.Unregister(claims.PlayerID, conn)
+		defer wsManager.Unregister(claims.PlayerID, connectionID)
 
 		onlineCtx, stopOnlineRefresh := context.WithCancel(context.Background())
 		defer stopOnlineRefresh()
 
-		if err := refreshWebSocketOnlineStatus(onlineCtx, redisClient, claims.PlayerID); err != nil {
+		if err := refreshWebSocketOnlineStatus(onlineCtx, redisClient, claims.PlayerID, connectionID); err != nil {
 			log.Printf("websocket update redis online status failed: player_id=%d err=%v", claims.PlayerID, err)
 			_ = writeWebSocketJSON(conn, writeMu, realtimews.NewErrorMessage("", 50024, "update online status failed"))
 			return
 		}
 
-		go keepWebSocketOnlineStatus(onlineCtx, redisClient, claims.PlayerID)
+		go keepWebSocketOnlineStatus(onlineCtx, redisClient, claims.PlayerID, connectionID)
 		go keepWebSocketAlive(onlineCtx, conn, writeMu, claims.PlayerID, claims.Username)
 
 		remoteAddr := conn.RemoteAddr().String()
-		log.Printf("websocket connected: player_id=%d username=%s remote=%s online_players=%d", claims.PlayerID, claims.Username, remoteAddr, wsManager.Count())
-		defer log.Printf("websocket disconnected: player_id=%d username=%s remote=%s", claims.PlayerID, claims.Username, remoteAddr)
+		log.Printf("websocket connected: player_id=%d username=%s connection_id=%s remote=%s online_players=%d", claims.PlayerID, claims.Username, connectionID, remoteAddr, wsManager.Count())
+		defer log.Printf("websocket disconnected: player_id=%d username=%s connection_id=%s remote=%s", claims.PlayerID, claims.Username, connectionID, remoteAddr)
 
 		welcome := realtimews.NewServerMessage(
 			realtimews.MessageTypeServerWelcome,
 			"",
 			realtimews.WelcomeData{
+				ConnectionID:  connectionID,
 				PlayerID:      claims.PlayerID,
 				Username:      claims.Username,
+				ConnectedAt:   connectedAt,
+				LastPongAt:    connectedAt,
 				OnlinePlayers: wsManager.Count(),
 				OnlineTTL:     int(onlineTTL.Seconds()),
 			},
@@ -194,12 +209,12 @@ func websocketPlayerClaims(c *gin.Context, jwtSecret string) (*tokenauth.Claims,
 	return claims, true
 }
 
-func refreshWebSocketOnlineStatus(ctx context.Context, redisClient *redis.Client, playerID int64) error {
+func refreshWebSocketOnlineStatus(ctx context.Context, redisClient *redis.Client, playerID int64, connectionID string) error {
 	key := onlinePlayerKey(playerID)
-	return redisClient.Set(ctx, key, "1", onlineTTL).Err()
+	return redisClient.Set(ctx, key, connectionID, onlineTTL).Err()
 }
 
-func keepWebSocketOnlineStatus(ctx context.Context, redisClient *redis.Client, playerID int64) {
+func keepWebSocketOnlineStatus(ctx context.Context, redisClient *redis.Client, playerID int64, connectionID string) {
 	ticker := time.NewTicker(onlineTTL / 2)
 	defer ticker.Stop()
 
@@ -208,7 +223,7 @@ func keepWebSocketOnlineStatus(ctx context.Context, redisClient *redis.Client, p
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := refreshWebSocketOnlineStatus(ctx, redisClient, playerID); err != nil {
+			if err := refreshWebSocketOnlineStatus(ctx, redisClient, playerID, connectionID); err != nil {
 				log.Printf("websocket refresh redis online status failed: player_id=%d err=%v", playerID, err)
 			}
 		}
