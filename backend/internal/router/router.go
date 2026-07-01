@@ -6,6 +6,7 @@ import (
 	"game-realtime-gm/backend/internal/config"
 	"game-realtime-gm/backend/internal/handler"
 	"game-realtime-gm/backend/internal/middleware"
+	"game-realtime-gm/backend/internal/squad"
 	"game-realtime-gm/backend/internal/ws"
 
 	"github.com/gin-gonic/gin"
@@ -22,9 +23,10 @@ func New(db *pgxpool.Pool, redisClient *redis.Client, cfg config.Config) http.Ha
 	playerHandler := handler.NewPlayerHandler(db)
 	onlineHandler := handler.NewOnlineHandler(redisClient)
 	wsManager := ws.NewManager()
+	squadManager := squad.NewManager()
 
 	r.GET("/health", handler.Health)
-	r.GET("/ws", handler.WebSocketEcho(cfg.JWTSecret, wsManager, redisClient))
+	r.GET("/ws", handler.WebSocketEcho(cfg.JWTSecret, wsManager, redisClient, squadManager))
 
 	api := r.Group("/api")
 	api.POST("/register", authHandler.Register)

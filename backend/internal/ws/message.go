@@ -3,14 +3,26 @@ package ws
 import (
 	"encoding/json"
 	"time"
+
+	"game-realtime-gm/backend/internal/squad"
 )
 
 const (
 	MessageTypeServerWelcome = "server.welcome"
 	MessageTypeServerError   = "server.error"
 
-	MessageTypeDebugEcho       = "debug.echo"
-	MessageTypeDebugEchoResult = "debug.echo.result"
+	MessageTypeDebugEcho         = "debug.echo"
+	MessageTypeDebugEchoResult   = "debug.echo.result"
+	MessageTypeSquadCreate       = "squad.create"
+	MessageTypeSquadCreateResult = "squad.create.result"
+	MessageTypeSquadJoin         = "squad.join"
+	MessageTypeSquadJoinResult   = "squad.join.result"
+	MessageTypeSquadLeave        = "squad.leave"
+	MessageTypeSquadLeaveResult  = "squad.leave.result"
+	MessageTypeSquadReady        = "squad.ready"
+	MessageTypeSquadReadyResult  = "squad.ready.result"
+	MessageTypeSquadMe           = "squad.me"
+	MessageTypeSquadMeResult     = "squad.me.result"
 )
 
 type ClientMessage struct {
@@ -41,6 +53,22 @@ type WelcomeData struct {
 type EchoData struct {
 	ReceivedType string          `json:"received_type"`
 	ReceivedData json.RawMessage `json:"received_data,omitempty"`
+}
+type SquadJoinRequest struct {
+	SquadID string `json:"squad_id"`
+}
+
+type SquadReadyRequest struct {
+	Ready bool `json:"ready"`
+}
+
+type SquadData struct {
+	Squad *squad.Squad `json:"squad,omitempty"`
+}
+
+type SquadLeaveData struct {
+	Squad     *squad.Squad `json:"squad,omitempty"`
+	Disbanded bool         `json:"disbanded"`
 }
 
 func NewServerMessage(messageType string, requestID string, data any) ServerMessage {

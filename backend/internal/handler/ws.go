@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tokenauth "game-realtime-gm/backend/internal/auth"
+	gamesquad "game-realtime-gm/backend/internal/squad"
 	realtimews "game-realtime-gm/backend/internal/ws"
 
 	"github.com/gin-gonic/gin"
@@ -32,7 +33,7 @@ var wsUpgrader = websocket.Upgrader{
 	},
 }
 
-func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient *redis.Client) gin.HandlerFunc {
+func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient *redis.Client, squadManager *gamesquad.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, ok := websocketPlayerClaims(c, jwtSecret)
 		if !ok {
@@ -168,6 +169,144 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 					log.Printf("websocket write echo response failed: %v", err)
 					return
 				}
+
+			case realtimews.MessageTypeSquadJoin:
+				var request realtimews.SquadJoinRequest
+				if err := json.Unmarshal(clientMessage.Data, &request); err != nil {
+					errMsg := realtimews.NewErrorMessage(clientMessage.RequestID, 40027, "invalid squad join data")
+					if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+						log.Printf("websocket write squad join invalid data failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				if strings.TrimSpace(request.SquadID) == "" {
+					errMsg := realtimews.NewErrorMessage(clientMessage.RequestID, 40028, "squad_id required")
+					if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+						log.Printf("websocket write squad join missing squad_id failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				joinedSquad, err := squadManager.Join(request.SquadID, claims.PlayerID, claims.Username)
+				if err != nil {
+					errMsg := squadErrorMessage(clientMessage.RequestID, err)
+					if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+						log.Printf("websocket write squad join error failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				response := realtimews.NewServerMessage(
+					realtimews.MessageTypeSquadJoinResult,
+					clientMessage.RequestID,
+					realtimews.SquadData{Squad: joinedSquad},
+				)
+				if err := writeWebSocketJSON(conn, writeMu, response); err != nil {
+					log.Printf("websocket write squad join response failed: %v", err)
+					return
+				}
+
+			case realtimews.MessageTypeSquadLeave:
+				leftSquad, disbanded, err := squadManager.Leave(claims.PlayerID)
+				if err != nil {
+					errMsg := squadErrorMessage(clientMessage.RequestID, err)
+					if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+						log.Printf("websocket write squad leave error failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				response := realtimews.NewServerMessage(
+					realtimews.MessageTypeSquadLeaveResult,
+					clientMessage.RequestID,
+					realtimews.SquadLeaveData{
+						Squad:     leftSquad,
+						Disbanded: disbanded,
+					},
+				)
+				if err := writeWebSocketJSON(conn, writeMu, response); err != nil {
+					log.Printf("websocket write squad leave response failed: %v", err)
+					return
+				}
+
+			case realtimews.MessageTypeSquadReady:
+				var request realtimews.SquadReadyRequest
+				if err := json.Unmarshal(clientMessage.Data, &request); err != nil {
+					errMsg := realtimews.NewErrorMessage(clientMessage.RequestID, 40029, "invalid squad ready data")
+					if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+						log.Printf("websocket write squad ready invalid data failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				updatedSquad, err := squadManager.SetReady(claims.PlayerID, request.Ready)
+				if err != nil {
+					errMsg := squadErrorMessage(clientMessage.RequestID, err)
+					if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+						log.Printf("websocket write squad ready error failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				response := realtimews.NewServerMessage(
+					realtimews.MessageTypeSquadReadyResult,
+					clientMessage.RequestID,
+					realtimews.SquadData{Squad: updatedSquad},
+				)
+				if err := writeWebSocketJSON(conn, writeMu, response); err != nil {
+					log.Printf("websocket write squad ready response failed: %v", err)
+					return
+				}
+
+			case realtimews.MessageTypeSquadMe:
+				currentSquad, err := squadManager.GetByPlayer(claims.PlayerID)
+				if err != nil {
+					errMsg := squadErrorMessage(clientMessage.RequestID, err)
+					if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+						log.Printf("websocket write squad me error failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				response := realtimews.NewServerMessage(
+					realtimews.MessageTypeSquadMeResult,
+					clientMessage.RequestID,
+					realtimews.SquadData{Squad: currentSquad},
+				)
+				if err := writeWebSocketJSON(conn, writeMu, response); err != nil {
+					log.Printf("websocket write squad me response failed: %v", err)
+					return
+				}
+
+			case realtimews.MessageTypeSquadCreate:
+				createdSquad, err := squadManager.Create(claims.PlayerID, claims.Username)
+				if err != nil {
+					errMsg := squadErrorMessage(clientMessage.RequestID, err)
+					if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+						log.Printf("websocket write squad create error failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				response := realtimews.NewServerMessage(
+					realtimews.MessageTypeSquadCreateResult,
+					clientMessage.RequestID,
+					realtimews.SquadData{Squad: createdSquad},
+				)
+				if err := writeWebSocketJSON(conn, writeMu, response); err != nil {
+					log.Printf("websocket write squad create response failed: %v", err)
+					return
+				}
+
 			default:
 				errMsg := realtimews.NewErrorMessage(clientMessage.RequestID, 40424, "unsupported websocket message type")
 				if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
@@ -176,6 +315,21 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 				}
 			}
 		}
+	}
+}
+
+func squadErrorMessage(requestID string, err error) realtimews.ServerMessage {
+	switch err {
+	case gamesquad.ErrPlayerAlreadyInSquad:
+		return realtimews.NewErrorMessage(requestID, 40926, "player already in squad")
+	case gamesquad.ErrPlayerNotInSquad:
+		return realtimews.NewErrorMessage(requestID, 40426, "player not in squad")
+	case gamesquad.ErrSquadNotFound:
+		return realtimews.NewErrorMessage(requestID, 40427, "squad not found")
+	case gamesquad.ErrSquadFull:
+		return realtimews.NewErrorMessage(requestID, 40927, "squad is full")
+	default:
+		return realtimews.NewErrorMessage(requestID, 50026, "squad operation failed")
 	}
 }
 
