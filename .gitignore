@@ -41,3 +41,9 @@ redis_data/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Internal Codex collaboration docs
+docs/codex-context.md
+docs/conversation-handoff-gpt55.md
+docs/mcp-adoption-plan.md
+docs/skill-adoption-plan.md
