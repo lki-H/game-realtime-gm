@@ -2,7 +2,7 @@
 
 这是一个持续迭代中的 Go 后端学习项目，目标是模拟游戏业务里的玩家服务、在线状态、实时连接和 GM 管理后台能力。
 
-项目当前重点放在后端工程基础和游戏后台业务闭环：玩家注册登录、JWT 鉴权、管理员登录、管理员权限校验、玩家查询、封禁解封、GM 操作日志、WebSocket 玩家长连接、Redis 在线状态和接口文档。
+项目当前重点放在后端工程基础和游戏后台业务闭环：玩家注册登录、JWT 鉴权、管理员登录、管理员权限校验、玩家查询、封禁解封、GM 操作日志、WebSocket 玩家长连接、Redis 在线状态、小队房间基础和接口文档。
 
 后续业务方向会逐步收束到“共斗 PVE 游戏后台与实时服务基础”：先在单体 Go 服务中实现小队房间、任务匹配、副本生命周期、结算记录和 GM 观察能力，再把 UDP/KCP、状态同步、战斗服拆分等内容作为二期研究方向。
 
@@ -11,7 +11,8 @@
 - 面向方向：Go 后端实习、游戏服务端实习、游戏后台/运营工具方向实习。
 - 业务场景：游戏玩家基础服务 + GM 运营管理后台 + 共斗 PVE 实时服务基础。
 - 学习方式：按 `docs/day/dayXX-plan.md` 每天拆分一个小需求推进。
-- 当前进度：已推进到 Day 23，正在完善 WebSocket ping/pong 心跳、读写超时和连接生命周期。
+- 当前进度：已推进到 Day 26，正在从 WebSocket 连接能力进入共斗 PVE 小队房间基础能力。
+- 迭代方式：后续新增功能时，也会回头优化已完成模块，例如登录鉴权、GM 操作日志、Redis 在线状态、WebSocket 连接生命周期和小队房间边界。
 
 ## 参考方向
 
@@ -71,6 +72,9 @@ docs/project-technical-standards.md
 - WebSocket 断开后停止续期，等待 Redis key 自动过期
 - WebSocket ping/pong 心跳
 - WebSocket 读超时、写超时和单连接写锁
+- WebSocket 统一 JSON 消息协议
+- WebSocket 连接会话 ID
+- 小队房间基础消息：创建小队、加入小队、离开小队、设置准备状态、查询当前小队
 
 ### GM 管理侧
 
@@ -100,15 +104,18 @@ game-realtime-gm/
 │       ├── auth/            # JWT、密码相关逻辑
 │       ├── cache/           # Redis 连接
 │       ├── config/          # 配置加载
-│       ├── database/        # PostgreSQL 连接和建表 SQL
+│       ├── database/        # 数据库连接和建表 SQL
 │       ├── handler/         # HTTP handler
 │       ├── middleware/      # 玩家和管理员鉴权中间件
 │       ├── model/           # 业务模型
 │       ├── router/          # 路由注册
+│       ├── squad/           # 小队房间基础逻辑
 │       └── ws/              # WebSocket 连接管理
 ├── deploy/                  # Docker Compose 环境
-├── docs/                    # 学习计划、项目文档、交接文档
-└── frontend/                # 预留前端管理端目录
+├── docs/                    # 项目实战文档、接口协议和展示规划
+│   ├── adr/                 # 架构决策记录
+│   ├── day/                 # 每日学习计划
+└── frontend/                # 预留 GM 后台和游戏 Demo
 ```
 
 ## 快速启动
@@ -218,6 +225,18 @@ JWT_SECRET=game-realtime-dev-secret
 docs/api-overview.md
 ```
 
+WebSocket 消息协议见：
+
+```text
+docs/ws-protocol.md
+```
+
+前端共享类型约定见：
+
+```text
+docs/frontend-api-types.md
+```
+
 核心接口包括：
 
 ```text
@@ -242,7 +261,7 @@ GET  /ws
 docs/day/day01-plan.md
 docs/day/day02-plan.md
 ...
-docs/day/day23-plan.md
+docs/day/day26-plan.md
 ```
 
 这些文件当前统一放在：
@@ -263,6 +282,42 @@ docs/project-direction-pve.md
 
 ```text
 docs/project-technical-standards.md
+```
+
+## 文档导航
+
+项目实战展示入口：
+
+```text
+docs/presentation-plan.md
+```
+
+GM 后台和游戏 Demo 前端规划：
+
+```text
+docs/frontend-plan.md
+docs/demo-plan.md
+```
+
+演示数据、测试与演示验收：
+
+```text
+docs/data-seed-plan.md
+docs/test-and-demo-plan.md
+```
+
+接口、协议与前端类型：
+
+```text
+docs/api-overview.md
+docs/ws-protocol.md
+docs/frontend-api-types.md
+```
+
+架构决策和项目文档：
+
+```text
+docs/adr/
 ```
 
 ## 本地验证
@@ -296,6 +351,8 @@ docker exec -it game_realtime_postgres psql -U game -d game_realtime
 - PostgreSQL 表设计和查询能力
 - Redis 在线状态能力
 - WebSocket 长连接和连接生命周期
+- WebSocket 统一消息协议
+- 小队房间基础业务
 - JWT 鉴权和权限区分
 - GM 后台业务建模
 - 操作日志审计思路
@@ -306,11 +363,15 @@ docker exec -it game_realtime_postgres psql -U game -d game_realtime
 
 后续计划：
 
-- WebSocket ping/pong 心跳和读写超时
-- 统一 WebSocket 消息协议
-- 连接会话 ID 和断线重连基础
-- 小队房间、准备状态和队长机制
-- PVE 任务匹配、任务副本生命周期和结算记录
+- 小队状态广播
+- 任务副本状态机
+- PVE 匹配 ticket、Redis 队列、匹配超时和取消匹配
+- 任务结算记录、奖励记录、幂等 key 和 nonce 防重放
+- 排行榜、战绩查询和 GM 实时观察
+- WebSocket 限流、错误响应、消息大小限制和封禁踢线
+- `ws_bot` 压测、`go test -race` 并发检查、基础指标和日志链路
 - 更完整的接口测试和 WebSocket 测试
-- 前端管理端页面
+- README、架构图、数据流图和简历表达阶段复盘
+- React GM 后台轻量版
+- React + Phaser 轻量游戏 Demo
 - 服务器部署和线上演示环境
