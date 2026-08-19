@@ -1,0 +1,51 @@
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Logs and temporary files
+*.log
+*.tmp
+tmp/
+temp/
+
+# Frontend dependencies and build output
+node_modules/
+dist/
+build/
+coverage/
+
+# Go build output
+*.exe
+*.test
+*.out
+backend/*.exe
+backend/tmp/
+backend/.air/
+
+# Docker / database local data
+*.pid
+*.dump
+*.sql.gz
+postgres_data/
+mysql_data/
+redis_data/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Internal collaboration docs
+AGENTS.md
+docs/codex-context.md
+docs/conversation-handoff-gpt55.md
+docs/mcp-adoption-plan.md
+docs/skill-adoption-plan.md
