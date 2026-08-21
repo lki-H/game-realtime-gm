@@ -23,6 +23,14 @@ const (
 	MessageTypeSquadReadyResult  = "squad.ready.result"
 	MessageTypeSquadMe           = "squad.me"
 	MessageTypeSquadMeResult     = "squad.me.result"
+	MessageTypeSquadStateChanged = "squad.state.changed"
+)
+
+const (
+	SquadEventMemberJoined   = "member_joined"
+	SquadEventMemberLeft     = "member_left"
+	SquadEventReadyChanged   = "ready_changed"
+	SquadEventSquadDisbanded = "squad_disbanded"
 )
 
 type ClientMessage struct {
@@ -69,6 +77,13 @@ type SquadData struct {
 type SquadLeaveData struct {
 	Squad     *squad.Squad `json:"squad,omitempty"`
 	Disbanded bool         `json:"disbanded"`
+}
+
+type SquadStateChangedData struct {
+	Event         string       `json:"event"`
+	ActorPlayerID int64        `json:"actor_player_id,omitempty"`
+	Squad         *squad.Squad `json:"squad,omitempty"`
+	Disbanded     bool         `json:"disbanded,omitempty"`
 }
 
 func NewServerMessage(messageType string, requestID string, data any) ServerMessage {

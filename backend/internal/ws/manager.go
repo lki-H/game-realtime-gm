@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -8,13 +9,33 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const clientWriteWait = 10 * time.Second
+
+var ErrClientNotConnected = errors.New("websocket client not connected")
+
 type Client struct {
 	ConnectionID string
 	PlayerID     int64
 	Username     string
 	Conn         *websocket.Conn
+	WriteMu      *sync.Mutex
 	ConnectedAt  time.Time
 	LastPongAt   time.Time
+}
+
+func (c *Client) SendJSON(value any) error {
+	if c == nil || c.Conn == nil || c.WriteMu == nil {
+		return ErrClientNotConnected
+	}
+
+	c.WriteMu.Lock()
+	defer c.WriteMu.Unlock()
+
+	if err := c.Conn.SetWriteDeadline(time.Now().Add(clientWriteWait)); err != nil {
+		return err
+	}
+
+	return c.Conn.WriteJSON(value)
 }
 
 type Manager struct {
@@ -94,4 +115,28 @@ func (m *Manager) PlayerIDs() []int64 {
 	})
 
 	return playerIDs
+}
+
+func (m *Manager) SendToPlayer(playerID int64, value any) error {
+	m.mu.RLock()
+	client, exists := m.clients[playerID]
+	m.mu.RUnlock()
+
+	if !exists {
+		return ErrClientNotConnected
+	}
+
+	return client.SendJSON(value)
+}
+
+func (m *Manager) BroadcastToPlayers(playerIDs []int64, value any) []int64 {
+	failedPlayerIDs := make([]int64, 0)
+
+	for _, playerID := range playerIDs {
+		if err := m.SendToPlayer(playerID, value); err != nil {
+			failedPlayerIDs = append(failedPlayerIDs, playerID)
+		}
+	}
+
+	return failedPlayerIDs
 }

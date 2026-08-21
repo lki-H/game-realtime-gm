@@ -326,8 +326,9 @@ Day 24 起，客户端发送 WebSocket 业务消息时，需要使用统一 JSON
 | `squad.leave` | 离开当前小队；最后一人离开时小队解散 |
 | `squad.ready` | 设置当前玩家准备状态，需要 `data.ready` |
 | `squad.me` | 查询当前玩家所在小队 |
+| `squad.state.changed` | 服务端主动推送的小队状态变化广播，例如成员加入、离开、ready 变化 |
 
-Day 26 起，WebSocket 支持小队房间基础消息。小队状态当前保存在 Go 进程内存中，服务重启后会清空；当前只把操作结果返回给发起操作的玩家，尚未实现小队内广播。
+Day 27 起，服务端会在小队成员加入、离开、ready 状态变化时，向小队内其他在线成员推送 `squad.state.changed`。小队状态当前保存在 Go 进程内存中，服务重启后会清空。
 
 创建小队请求：
 
@@ -428,6 +429,49 @@ Day 26 起，WebSocket 支持小队房间基础消息。小队状态当前保存
 }
 ```
 
+小队状态变化时，其他在线成员会收到服务端主动推送：
+
+~~~json
+{
+  "type": "squad.state.changed",
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "event": "member_joined",
+    "actor_player_id": 2,
+    "squad": {
+      "id": "squad_1",
+      "leader_id": 1,
+      "max_members": 4,
+      "members": [
+        {
+          "player_id": 1,
+          "username": "player01",
+          "ready": true,
+          "joined_at": "2026-07-01T10:00:00+08:00"
+        },
+        {
+          "player_id": 2,
+          "username": "player02",
+          "ready": false,
+          "joined_at": "2026-07-01T10:01:00+08:00"
+        }
+      ]
+    }
+  },
+  "server_time": "2026-07-01T10:01:00+08:00"
+}
+~~~
+
+支持的 `event`：
+
+| event | 说明 |
+| --- | --- |
+| `member_joined` | 有成员加入小队 |
+| `member_left` | 有成员离开小队 |
+| `ready_changed` | 有成员修改 ready 状态 |
+| `squad_disbanded` | 小队解散事件类型已预留；当前最后一名成员离开时只返回发起者自己的 `squad.leave.result` |
+
 当前 WebSocket 业务消息错误：
 
 | code | message | 场景 |
@@ -483,6 +527,7 @@ Day 23 起，服务端会为 WebSocket 连接增加 ping/pong 心跳与读写超
 单条 WebSocket 消息最大 4096 字节。
 WebSocket 写操作设置 10 秒写超时。
 pong 等待时间为 70 秒。
+超出消息大小限制时，服务端会结束当前连接，不继续处理该消息，也不保证通过同一连接返回 `server.error`。
 ```
 
 WebSocket 验证重点：
@@ -494,14 +539,16 @@ WebSocket 验证重点：
 4. 保持连接 30 秒以上，观察后端日志是否出现 websocket pong received。
 5. 发送 debug.echo JSON 消息，确认服务端返回 debug.echo.result。
 6. 发送 squad.create，确认服务端返回 squad.create.result。
-7. 使用第二个玩家 token 建立另一个 WebSocket 连接，发送 squad.join 加入第一个玩家创建的小队。
-8. 发送 squad.ready，确认成员 ready 状态会变化。
-9. 发送 squad.me，确认能查询当前玩家所在小队。
-10. 发送 squad.leave，确认玩家能离开小队，最后一人离开时 disbanded=true。
+7. 使用第二个玩家 token 建立另一个 WebSocket 连接，发送 squad.join 加入第一个玩家创建的小队，确认玩家 1 收到 squad.state.changed，event=member_joined。
+8. 发送 squad.ready，确认发起者收到 squad.ready.result，其他成员收到 event=ready_changed。
+9. 发送 squad.leave，确认发起者收到 squad.leave.result，其他成员收到 event=member_left。
+10. 发送 squad.me，确认能查询当前玩家所在小队。
 11. 进入 Redis 查看 online:player:<player_id> 的 value，确认它是 connection_id。
 12. 查看 online:player:<player_id> 的 TTL，确认连接保持时 TTL 会被续期。
 13. 使用同一个玩家 token 再开一个 WebSocket 连接，确认新的 connection_id 会替换旧连接。
 14. 关闭 WebSocket 连接后，确认后端日志出现 websocket disconnected，Redis key 等待 TTL 自动过期。
+15. 发送未知 type、缺少 type 和非法 JSON，确认分别返回 40424、40025 和 40024。
+16. 发送超过 4096 字节的文本消息，确认消息不会被 echo 或继续处理，连接按读取限制关闭。
 ```
 
 主要错误：
@@ -523,12 +570,13 @@ Day 23 已为 WebSocket 增加 ping/pong 心跳、读超时、写超时和写锁
 Day 24 已将 WebSocket 业务消息调整为统一 JSON 协议。
 Day 25 已为每次 WebSocket 连接生成 connection_id，并将 Redis 在线状态 value 改为当前 connection_id。
 Day 26 已新增小队房间基础消息，支持创建小队、加入小队、离开小队、设置准备状态和查询当前小队。
+Day 27 已新增小队状态广播；加入、离开和 ready 状态变化会通知小队内其他在线成员。
 online_players 表示当前 Go 进程内管理器记录的在线玩家连接数量。
 online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
 同一个玩家重复连接时，旧连接会被新连接替换；连接管理器通过 connection_id 避免旧连接断开时误注销新连接。
 当前不主动删除 Redis 在线 key，原因是避免旧连接断开时误删新连接刚写入的在线状态。
 当前小队状态只保存在 Go 进程内存，服务重启后会清空。
-当前暂不做小队状态广播、PVE 匹配和任务副本消息。
+当前已支持小队状态广播，但暂不做 PVE 匹配和任务副本消息。
 服务重启后，内存连接状态会清空。
 本地学习阶段使用 query 参数传 token；不要在日志里打印完整 token。
 ```

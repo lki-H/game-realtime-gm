@@ -2,7 +2,7 @@
 
 这是一个持续迭代的 Go 后端学习项目，用于实现游戏业务中的玩家服务、管理员运营能力、在线状态和实时小队连接。
 
-当前代码已完成 Day 26：玩家与管理员鉴权、玩家管理、封禁解封、GM 操作日志、Dashboard 统计、Redis 在线状态、WebSocket 连接生命周期，以及小队创建、加入、准备、查询和离开。
+当前代码已完成 Day 27：玩家与管理员鉴权、玩家管理、封禁解封、GM 操作日志、Dashboard 统计、Redis 在线状态、WebSocket 连接生命周期、小队基础操作，以及小队状态主动广播。
 
 ## 当前边界
 
@@ -50,6 +50,7 @@
 - 连接 ID、ping/pong、读写超时和单连接写锁
 - Redis 在线状态写入、续期和过期
 - 小队创建、加入、准备状态、查询和离开
+- 小队成员加入、离开和 ready 变化时，向其他在线成员推送 `squad.state.changed`
 
 ## 数据职责
 
@@ -87,7 +88,7 @@ game-realtime-gm/
 │       ├── squad/           小队内存状态
 │       └── ws/              WebSocket 协议与连接管理
 ├── deploy/                  Docker Compose 环境
-└── docs/                    API 文档和历史 Day 记录
+└── docs/                    API、架构决策和 Git 工作流文档
 ```
 
 ## 快速启动
@@ -175,8 +176,8 @@ JWT_SECRET=game-realtime-dev-secret
 ```text
 POST /api/register
 POST /api/login
-GET  /api/player/me
-PUT  /api/player/me/nickname
+GET  /api/me
+PATCH /api/me/nickname
 POST /api/admin/login
 GET  /api/admin/me
 GET  /api/admin/dashboard/summary
@@ -202,6 +203,8 @@ cd ..\deploy
 docker compose config
 ```
 
-## 学习记录
+## 项目文档
 
-`docs/day/` 保留 Day 01 至 Day 26 的实现过程。早期 Day 文档中的 PostgreSQL 内容是当时的学习记录；当前运行环境以本 README、Compose 和 MySQL schema 为准。
+- `docs/api-overview.md`：当前 HTTP API、WebSocket 消息、错误码和验证步骤。
+- `docs/adr/0006-使用MySQL作为主数据库.md`：主数据库迁移到 MySQL 的架构决策。
+- `docs/github-workflow.md`：公开仓库的安全提交与推送流程。

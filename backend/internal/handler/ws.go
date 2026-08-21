@@ -70,6 +70,7 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 			PlayerID:     claims.PlayerID,
 			Username:     claims.Username,
 			Conn:         conn,
+			WriteMu:      writeMu,
 			ConnectedAt:  connectedAt,
 			LastPongAt:   connectedAt,
 		}
@@ -210,6 +211,8 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 					return
 				}
 
+				broadcastSquadState(wsManager, joinedSquad, claims.PlayerID, realtimews.SquadEventMemberJoined, false)
+
 			case realtimews.MessageTypeSquadLeave:
 				leftSquad, disbanded, err := squadManager.Leave(claims.PlayerID)
 				if err != nil {
@@ -232,6 +235,10 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 				if err := writeWebSocketJSON(conn, writeMu, response); err != nil {
 					log.Printf("websocket write squad leave response failed: %v", err)
 					return
+				}
+
+				if !disbanded {
+					broadcastSquadState(wsManager, leftSquad, claims.PlayerID, realtimews.SquadEventMemberLeft, false)
 				}
 
 			case realtimews.MessageTypeSquadReady:
@@ -264,6 +271,8 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 					log.Printf("websocket write squad ready response failed: %v", err)
 					return
 				}
+
+				broadcastSquadState(wsManager, updatedSquad, claims.PlayerID, realtimews.SquadEventReadyChanged, false)
 
 			case realtimews.MessageTypeSquadMe:
 				currentSquad, err := squadManager.GetByPlayer(claims.PlayerID)
@@ -315,6 +324,39 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 				}
 			}
 		}
+	}
+}
+
+func broadcastSquadState(wsManager *realtimews.Manager, squadState *gamesquad.Squad, actorPlayerID int64, event string, disbanded bool) {
+	if squadState == nil {
+		return
+	}
+
+	playerIDs := make([]int64, 0, len(squadState.Members))
+	for _, member := range squadState.Members {
+		if member.PlayerID != actorPlayerID {
+			playerIDs = append(playerIDs, member.PlayerID)
+		}
+	}
+
+	if len(playerIDs) == 0 {
+		return
+	}
+
+	message := realtimews.NewServerMessage(
+		realtimews.MessageTypeSquadStateChanged,
+		"",
+		realtimews.SquadStateChangedData{
+			Event:         event,
+			ActorPlayerID: actorPlayerID,
+			Squad:         squadState,
+			Disbanded:     disbanded,
+		},
+	)
+
+	failedPlayerIDs := wsManager.BroadcastToPlayers(playerIDs, message)
+	if len(failedPlayerIDs) > 0 {
+		log.Printf("websocket broadcast squad state failed: event=%s actor_player_id=%d failed_player_ids=%v", event, actorPlayerID, failedPlayerIDs)
 	}
 }
 
