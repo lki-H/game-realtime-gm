@@ -7,6 +7,7 @@ import (
 	"game-realtime-gm/backend/internal/config"
 	"game-realtime-gm/backend/internal/handler"
 	"game-realtime-gm/backend/internal/middleware"
+	"game-realtime-gm/backend/internal/mission"
 	"game-realtime-gm/backend/internal/squad"
 	"game-realtime-gm/backend/internal/ws"
 
@@ -24,9 +25,10 @@ func New(db *sql.DB, redisClient *redis.Client, cfg config.Config) http.Handler 
 	onlineHandler := handler.NewOnlineHandler(redisClient)
 	wsManager := ws.NewManager()
 	squadManager := squad.NewManager()
+	missionManager := mission.NewManager()
 
 	r.GET("/health", handler.Health)
-	r.GET("/ws", handler.WebSocketEcho(cfg.JWTSecret, wsManager, redisClient, squadManager))
+	r.GET("/ws", handler.WebSocketEcho(cfg.JWTSecret, wsManager, redisClient, squadManager, missionManager))
 
 	api := r.Group("/api")
 	api.POST("/register", authHandler.Register)

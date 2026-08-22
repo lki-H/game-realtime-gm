@@ -327,8 +327,17 @@ Day 24 起，客户端发送 WebSocket 业务消息时，需要使用统一 JSON
 | `squad.ready` | 设置当前玩家准备状态，需要 `data.ready` |
 | `squad.me` | 查询当前玩家所在小队 |
 | `squad.state.changed` | 服务端主动推送的小队状态变化广播，例如成员加入、离开、ready 变化 |
+| `mission.create` | 队长为当前小队创建 waiting 任务会话，需要 `data.mission_id` |
+| `mission.ready` | 队长执行 `waiting -> ready` |
+| `mission.start` | 队长执行 `ready -> running` |
+| `mission.finish` | 队长执行 `running -> finished` |
+| `mission.cancel` | 队长执行 `waiting -> canceled` |
+| `mission.me` | 查询当前玩家最近的任务会话 |
+| `mission.state.changed` | 服务端向其他任务参与者推送完整任务会话快照 |
 
 Day 27 起，服务端会在小队成员加入、离开、ready 状态变化时，向小队内其他在线成员推送 `squad.state.changed`。小队状态当前保存在 Go 进程内存中，服务重启后会清空。
+
+Day 28 起，服务端支持小队成员断线/重连、队长转移和任务会话状态机。任务会话同样保存在 Go 进程内存中，服务重启后会清空。
 
 创建小队请求：
 
@@ -358,6 +367,7 @@ Day 27 起，服务端会在小队成员加入、离开、ready 状态变化时�
           "player_id": 1,
           "username": "player01",
           "ready": true,
+          "online": true,
           "joined_at": "2026-07-01T10:00:00+08:00"
         }
       ],
@@ -448,12 +458,14 @@ Day 27 起，服务端会在小队成员加入、离开、ready 状态变化时�
           "player_id": 1,
           "username": "player01",
           "ready": true,
+          "online": true,
           "joined_at": "2026-07-01T10:00:00+08:00"
         },
         {
           "player_id": 2,
           "username": "player02",
           "ready": false,
+          "online": true,
           "joined_at": "2026-07-01T10:01:00+08:00"
         }
       ]
@@ -470,7 +482,128 @@ Day 27 起，服务端会在小队成员加入、离开、ready 状态变化时�
 | `member_joined` | 有成员加入小队 |
 | `member_left` | 有成员离开小队 |
 | `ready_changed` | 有成员修改 ready 状态 |
+| `member_disconnected` | 成员断线，保留成员但设置 `online=false`、`ready=false` |
+| `member_reconnected` | 保留成员重新连接，设置 `online=true`，ready 仍为 false |
+| `leader_changed` | 队长断线或主动离队后发生队长转移 |
 | `squad_disbanded` | 小队解散事件类型已预留；当前最后一名成员离开时只返回发起者自己的 `squad.leave.result` |
+
+### Day28 任务会话
+
+mission_instance 是任务会话与结算生命周期元数据，不是战斗服进程，也不保存逐帧物理、技能或 AI 状态。
+
+合法状态路径：
+
+~~~text
+waiting -> ready -> running -> finished
+waiting -> canceled
+~~~
+
+创建任务请求：
+
+~~~json
+{
+  "type": "mission.create",
+  "request_id": "mission-create-001",
+  "data": {
+    "mission_id": "training_ground"
+  }
+}
+~~~
+
+创建任务结果：
+
+~~~json
+{
+  "type": "mission.create.result",
+  "request_id": "mission-create-001",
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "mission": {
+      "id": "mission_instance_1",
+      "mission_id": "training_ground",
+      "squad_id": "squad_1",
+      "player_ids": [1, 2],
+      "status": "waiting",
+      "created_at": "2026-08-22T14:00:00+08:00",
+      "updated_at": "2026-08-22T14:00:00+08:00"
+    }
+  },
+  "server_time": "2026-08-22T14:00:00+08:00"
+}
+~~~
+
+状态操作请求都使用空对象 data：
+
+~~~json
+{
+  "type": "mission.ready",
+  "request_id": "mission-ready-001",
+  "data": {}
+}
+~~~
+
+把 type 分别改为：
+
+| type | 合法前置状态 | 目标状态 |
+| --- | --- | --- |
+| mission.ready | waiting，且所有小队成员在线并 ready | ready |
+| mission.start | ready，且所有小队成员在线并 ready | running |
+| mission.finish | running | finished |
+| mission.cancel | waiting | canceled |
+
+发起者收到对应的 mission.*.result，其他参与者收到：
+
+~~~json
+{
+  "type": "mission.state.changed",
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "event": "mission_started",
+    "actor_player_id": 1,
+    "mission": {
+      "id": "mission_instance_1",
+      "mission_id": "training_ground",
+      "squad_id": "squad_1",
+      "player_ids": [1, 2],
+      "status": "running",
+      "created_at": "2026-08-22T14:00:00+08:00",
+      "updated_at": "2026-08-22T14:01:00+08:00",
+      "ready_at": "2026-08-22T14:00:30+08:00",
+      "started_at": "2026-08-22T14:01:00+08:00"
+    }
+  },
+  "server_time": "2026-08-22T14:01:00+08:00"
+}
+~~~
+
+任务广播事件：
+
+| event | 状态 |
+| --- | --- |
+| mission_created | waiting |
+| mission_ready | ready |
+| mission_started | running |
+| mission_finished | finished |
+| mission_canceled | canceled |
+
+查询当前玩家最近任务：
+
+~~~json
+{
+  "type": "mission.me",
+  "request_id": "mission-me-001",
+  "data": {}
+}
+~~~
+
+当前限制：
+
+- 只有当前小队队长可以创建和改变任务状态。
+- 同一小队不能同时存在两个未结束任务。
+- 任务、小队和成员在线状态都只保存在当前 Go 进程内存中。
+- 任务创建后保存参与玩家 ID 快照，Day28 暂不处理任务中途成员增减锁定。
 
 当前 WebSocket 业务消息错误：
 
@@ -482,14 +615,24 @@ Day 27 起，服务端会在小队成员加入、离开、ready 状态变化时�
 | `40027` | `invalid squad join data` | `squad.join` 的 `data` 不是合法 JSON |
 | `40028` | `squad_id required` | `squad.join` 缺少 `data.squad_id` |
 | `40029` | `invalid squad ready data` | `squad.ready` 的 `data` 不是合法 JSON |
+| `40030` | `invalid mission create data` | `mission.create.data` 不是合法 JSON |
+| `40031` | `mission_id required` | 缺少任务模板 ID |
+| `40332` | `squad leader required` | 普通成员尝试创建或改变任务状态 |
 | `40426` | `player not in squad` | 玩家不在小队中，却执行离开、准备或查询当前小队 |
 | `40427` | `squad not found` | 指定小队不存在 |
+| `40428` | `mission instance not found` | 玩家没有任务会话 |
 | `40424` | `unsupported websocket message type` | `type` 暂未支持 |
 | `40926` | `player already in squad` | 玩家已经在小队中，又尝试创建或加入小队 |
 | `40927` | `squad is full` | 小队人数已满 |
+| `40928` | `squad member is offline` | ready/start 时存在离线成员 |
+| `40929` | `squad members are not ready` | ready/start 时存在未准备成员 |
+| `40930` | `squad already has active mission` | 同一小队重复创建未结束任务 |
+| `40931` | `invalid mission state transition` | 任务状态跳转不合法 |
+| `40932` | `mission squad changed` | 当前小队与任务创建时小队不一致 |
 | `50024` | `update online status failed` | 连接建立后更新 Redis 在线状态失败 |
 | `50025` | `generate websocket connection id failed` | 服务端生成 WebSocket 连接 ID 失败 |
 | `50026` | `squad operation failed` | 小队操作发生未预期的服务端错误 |
+| `50027` | `mission operation failed` | 任务操作发生未预期的服务端错误 |
 
 连接成功后，服务端会写入 Redis 在线状态：
 
@@ -549,6 +692,14 @@ WebSocket 验证重点：
 14. 关闭 WebSocket 连接后，确认后端日志出现 websocket disconnected，Redis key 等待 TTL 自动过期。
 15. 发送未知 type、缺少 type 和非法 JSON，确认分别返回 40424、40025 和 40024。
 16. 发送超过 4096 字节的文本消息，确认消息不会被 echo 或继续处理，连接按读取限制关闭。
+17. 两名成员都在线并 ready，队长依次发送 mission.create、mission.ready、mission.start、mission.finish。
+18. 确认发起者收到 mission.*.result，其他参与者收到 mission.state.changed。
+19. 创建第二个 waiting 任务后发送 mission.cancel，确认状态变为 canceled。
+20. 验证 waiting 直接 start、finished/canceled 回到 running 返回 40931。
+21. 验证普通成员改变任务状态返回 40332，重复创建活跃任务返回 40930。
+22. 让成员 ready=false 或断线，确认 mission.ready/start 分别返回 40929 或 40928。
+23. 关闭普通成员连接后确认 online=false、ready=false；重连后 online=true、ready 仍为 false。
+24. 关闭队长连接后确认广播 leader_changed，原队长重连后不会自动抢回队长。
 ```
 
 主要错误：
@@ -571,12 +722,14 @@ Day 24 已将 WebSocket 业务消息调整为统一 JSON 协议。
 Day 25 已为每次 WebSocket 连接生成 connection_id，并将 Redis 在线状态 value 改为当前 connection_id。
 Day 26 已新增小队房间基础消息，支持创建小队、加入小队、离开小队、设置准备状态和查询当前小队。
 Day 27 已新增小队状态广播；加入、离开和 ready 状态变化会通知小队内其他在线成员。
+Day 28 已新增小队成员在线状态、断线重连、队长转移和任务会话状态机。
 online_players 表示当前 Go 进程内管理器记录的在线玩家连接数量。
 online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
 同一个玩家重复连接时，旧连接会被新连接替换；连接管理器通过 connection_id 避免旧连接断开时误注销新连接。
 当前不主动删除 Redis 在线 key，原因是避免旧连接断开时误删新连接刚写入的在线状态。
 当前小队状态只保存在 Go 进程内存，服务重启后会清空。
-当前已支持小队状态广播，但暂不做 PVE 匹配和任务副本消息。
+当前任务会话只保存在 Go 进程内存；它是业务生命周期元数据，不是战斗服进程。
+当前已支持小队和任务会话广播，但暂不做 PVE 匹配、结算和排行榜消息。
 服务重启后，内存连接状态会清空。
 本地学习阶段使用 query 参数传 token；不要在日志里打印完整 token。
 ```

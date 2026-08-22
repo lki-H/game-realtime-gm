@@ -2,7 +2,7 @@
 
 这是一个持续迭代的 Go 后端学习项目，用于实现游戏业务中的玩家服务、管理员运营能力、在线状态和实时小队连接。
 
-当前代码已完成 Day 27：玩家与管理员鉴权、玩家管理、封禁解封、GM 操作日志、Dashboard 统计、Redis 在线状态、WebSocket 连接生命周期、小队基础操作，以及小队状态主动广播。
+当前代码已完成 Day 28：在 Day27 小队广播基础上，新增任务会话状态机、小队成员断线/重连状态和队长转移。
 
 ## 当前边界
 
@@ -51,6 +51,12 @@
 - Redis 在线状态写入、续期和过期
 - 小队创建、加入、准备状态、查询和离开
 - 小队成员加入、离开和 ready 变化时，向其他在线成员推送 `squad.state.changed`
+- 断线成员保留在小队并设置 `online=false`、`ready=false`
+- 队长断线或离队后转移给最早加入的在线成员
+- 任务会话创建、ready、开始、结束、取消和查询
+- `waiting -> ready -> running -> finished` 与 `waiting -> canceled` 合法状态跳转
+- `mission.state.changed` 任务会话主动广播
+- mission、squad 和 WebSocket 连接替换单元测试
 
 ## 数据职责
 
@@ -84,6 +90,7 @@ game-realtime-gm/
 │       ├── handler/         HTTP 与 WebSocket handler
 │       ├── middleware/      玩家和管理员鉴权
 │       ├── model/           数据模型
+│       ├── mission/         任务会话业务状态机
 │       ├── router/          路由注册
 │       ├── squad/           小队内存状态
 │       └── ws/              WebSocket 协议与连接管理

@@ -63,18 +63,20 @@ func (m *Manager) Register(client *Client) *websocket.Conn {
 	return nil
 }
 
-func (m *Manager) Unregister(playerID int64, connectionID string) {
+func (m *Manager) Unregister(playerID int64, connectionID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	currentClient, exists := m.clients[playerID]
 	if !exists {
-		return
+		return false
+	}
+	if currentClient.ConnectionID != connectionID {
+		return false
 	}
 
-	if currentClient.ConnectionID == connectionID {
-		delete(m.clients, playerID)
-	}
+	delete(m.clients, playerID)
+	return true
 }
 
 func (m *Manager) UpdateLastPong(playerID int64, connectionID string, lastPongAt time.Time) bool {

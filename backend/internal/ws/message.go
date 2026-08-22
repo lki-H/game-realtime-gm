@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"game-realtime-gm/backend/internal/mission"
 	"game-realtime-gm/backend/internal/squad"
 )
 
@@ -11,26 +12,50 @@ const (
 	MessageTypeServerWelcome = "server.welcome"
 	MessageTypeServerError   = "server.error"
 
-	MessageTypeDebugEcho         = "debug.echo"
-	MessageTypeDebugEchoResult   = "debug.echo.result"
-	MessageTypeSquadCreate       = "squad.create"
-	MessageTypeSquadCreateResult = "squad.create.result"
-	MessageTypeSquadJoin         = "squad.join"
-	MessageTypeSquadJoinResult   = "squad.join.result"
-	MessageTypeSquadLeave        = "squad.leave"
-	MessageTypeSquadLeaveResult  = "squad.leave.result"
-	MessageTypeSquadReady        = "squad.ready"
-	MessageTypeSquadReadyResult  = "squad.ready.result"
-	MessageTypeSquadMe           = "squad.me"
-	MessageTypeSquadMeResult     = "squad.me.result"
-	MessageTypeSquadStateChanged = "squad.state.changed"
+	MessageTypeDebugEcho           = "debug.echo"
+	MessageTypeDebugEchoResult     = "debug.echo.result"
+	MessageTypeSquadCreate         = "squad.create"
+	MessageTypeSquadCreateResult   = "squad.create.result"
+	MessageTypeSquadJoin           = "squad.join"
+	MessageTypeSquadJoinResult     = "squad.join.result"
+	MessageTypeSquadLeave          = "squad.leave"
+	MessageTypeSquadLeaveResult    = "squad.leave.result"
+	MessageTypeSquadReady          = "squad.ready"
+	MessageTypeSquadReadyResult    = "squad.ready.result"
+	MessageTypeSquadMe             = "squad.me"
+	MessageTypeSquadMeResult       = "squad.me.result"
+	MessageTypeSquadStateChanged   = "squad.state.changed"
+	MessageTypeMissionCreate       = "mission.create"
+	MessageTypeMissionCreateResult = "mission.create.result"
+	MessageTypeMissionReady        = "mission.ready"
+	MessageTypeMissionReadyResult  = "mission.ready.result"
+	MessageTypeMissionStart        = "mission.start"
+	MessageTypeMissionStartResult  = "mission.start.result"
+	MessageTypeMissionFinish       = "mission.finish"
+	MessageTypeMissionFinishResult = "mission.finish.result"
+	MessageTypeMissionCancel       = "mission.cancel"
+	MessageTypeMissionCancelResult = "mission.cancel.result"
+	MessageTypeMissionMe           = "mission.me"
+	MessageTypeMissionMeResult     = "mission.me.result"
+	MessageTypeMissionStateChanged = "mission.state.changed"
 )
 
 const (
-	SquadEventMemberJoined   = "member_joined"
-	SquadEventMemberLeft     = "member_left"
-	SquadEventReadyChanged   = "ready_changed"
-	SquadEventSquadDisbanded = "squad_disbanded"
+	SquadEventMemberJoined       = "member_joined"
+	SquadEventMemberLeft         = "member_left"
+	SquadEventReadyChanged       = "ready_changed"
+	SquadEventSquadDisbanded     = "squad_disbanded"
+	SquadEventMemberDisconnected = "member_disconnected"
+	SquadEventMemberReconnected  = "member_reconnected"
+	SquadEventLeaderChanged      = "leader_changed"
+)
+
+const (
+	MissionEventCreated  = "mission_created"
+	MissionEventReady    = "mission_ready"
+	MissionEventStarted  = "mission_started"
+	MissionEventFinished = "mission_finished"
+	MissionEventCanceled = "mission_canceled"
 )
 
 type ClientMessage struct {
@@ -84,6 +109,20 @@ type SquadStateChangedData struct {
 	ActorPlayerID int64        `json:"actor_player_id,omitempty"`
 	Squad         *squad.Squad `json:"squad,omitempty"`
 	Disbanded     bool         `json:"disbanded,omitempty"`
+}
+
+type MissionCreateRequest struct {
+	MissionID string `json:"mission_id"`
+}
+
+type MissionData struct {
+	Mission *mission.Instance `json:"mission,omitempty"`
+}
+
+type MissionStateChangedData struct {
+	Event         string            `json:"event"`
+	ActorPlayerID int64             `json:"actor_player_id,omitempty"`
+	Mission       *mission.Instance `json:"mission,omitempty"`
 }
 
 func NewServerMessage(messageType string, requestID string, data any) ServerMessage {

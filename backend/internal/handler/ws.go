@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tokenauth "game-realtime-gm/backend/internal/auth"
+	gamemission "game-realtime-gm/backend/internal/mission"
 	gamesquad "game-realtime-gm/backend/internal/squad"
 	realtimews "game-realtime-gm/backend/internal/ws"
 
@@ -33,7 +34,7 @@ var wsUpgrader = websocket.Upgrader{
 	},
 }
 
-func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient *redis.Client, squadManager *gamesquad.Manager) gin.HandlerFunc {
+func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient *redis.Client, squadManager *gamesquad.Manager, missionManager *gamemission.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, ok := websocketPlayerClaims(c, jwtSecret)
 		if !ok {
@@ -80,7 +81,22 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 			_ = oldConn.Close()
 			log.Printf("websocket replaced old connection: player_id=%d username=%s", claims.PlayerID, claims.Username)
 		}
-		defer wsManager.Unregister(claims.PlayerID, connectionID)
+		defer func() {
+			if !wsManager.Unregister(claims.PlayerID, connectionID) {
+				return
+			}
+
+			squadState, changed, leaderChanged, err := squadManager.HandleDisconnect(claims.PlayerID)
+			if err != nil || !changed {
+				return
+			}
+
+			event := realtimews.SquadEventMemberDisconnected
+			if leaderChanged {
+				event = realtimews.SquadEventLeaderChanged
+			}
+			broadcastSquadState(wsManager, squadState, claims.PlayerID, event, false)
+		}()
 
 		onlineCtx, stopOnlineRefresh := context.WithCancel(context.Background())
 		defer stopOnlineRefresh()
@@ -93,6 +109,10 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 
 		go keepWebSocketOnlineStatus(onlineCtx, redisClient, claims.PlayerID, connectionID)
 		go keepWebSocketAlive(onlineCtx, conn, writeMu, claims.PlayerID, claims.Username)
+
+		if squadState, changed, err := squadManager.HandleReconnect(claims.PlayerID); err == nil && changed {
+			broadcastSquadState(wsManager, squadState, claims.PlayerID, realtimews.SquadEventMemberReconnected, false)
+		}
 
 		remoteAddr := conn.RemoteAddr().String()
 		log.Printf("websocket connected: player_id=%d username=%s connection_id=%s remote=%s online_players=%d", claims.PlayerID, claims.Username, connectionID, remoteAddr, wsManager.Count())
@@ -214,6 +234,9 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 				broadcastSquadState(wsManager, joinedSquad, claims.PlayerID, realtimews.SquadEventMemberJoined, false)
 
 			case realtimews.MessageTypeSquadLeave:
+				squadBeforeLeave, _ := squadManager.GetByPlayer(claims.PlayerID)
+				wasLeader := squadBeforeLeave != nil && squadBeforeLeave.LeaderID == claims.PlayerID
+
 				leftSquad, disbanded, err := squadManager.Leave(claims.PlayerID)
 				if err != nil {
 					errMsg := squadErrorMessage(clientMessage.RequestID, err)
@@ -238,7 +261,18 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 				}
 
 				if !disbanded {
-					broadcastSquadState(wsManager, leftSquad, claims.PlayerID, realtimews.SquadEventMemberLeft, false)
+					event := realtimews.SquadEventMemberLeft
+					if wasLeader {
+						event = realtimews.SquadEventLeaderChanged
+					}
+
+					broadcastSquadState(
+						wsManager,
+						leftSquad,
+						claims.PlayerID,
+						event,
+						false,
+					)
 				}
 
 			case realtimews.MessageTypeSquadReady:
@@ -316,6 +350,161 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 					return
 				}
 
+			case realtimews.MessageTypeMissionCreate:
+				var request realtimews.MissionCreateRequest
+				if err := json.Unmarshal(clientMessage.Data, &request); err != nil {
+					errMsg := realtimews.NewErrorMessage(clientMessage.RequestID, 40030, "invalid mission create data")
+					if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+						log.Printf("websocket write mission create invalid data failed: %v", err)
+						return
+					}
+					continue
+				}
+				request.MissionID = strings.TrimSpace(request.MissionID)
+				if request.MissionID == "" {
+					errMsg := realtimews.NewErrorMessage(clientMessage.RequestID, 40031, "mission_id required")
+					if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+						log.Printf("websocket write mission_id required failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				squadState, err := squadManager.GetByPlayer(claims.PlayerID)
+				if err != nil {
+					if err := writeWebSocketJSON(conn, writeMu, squadErrorMessage(clientMessage.RequestID, err)); err != nil {
+						log.Printf("websocket write mission create squad error failed: %v", err)
+						return
+					}
+					continue
+				}
+				if squadState.LeaderID != claims.PlayerID {
+					errMsg := realtimews.NewErrorMessage(clientMessage.RequestID, 40332, "squad leader required")
+					if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+						log.Printf("websocket write squad leader required failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				playerIDs := make([]int64, 0, len(squadState.Members))
+				for _, member := range squadState.Members {
+					playerIDs = append(playerIDs, member.PlayerID)
+				}
+
+				createdMission, err := missionManager.Create(request.MissionID, squadState.ID, playerIDs)
+				if err != nil {
+					if err := writeWebSocketJSON(conn, writeMu, missionErrorMessage(clientMessage.RequestID, err)); err != nil {
+						log.Printf("websocket write mission create error failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				response := realtimews.NewServerMessage(
+					realtimews.MessageTypeMissionCreateResult,
+					clientMessage.RequestID,
+					realtimews.MissionData{Mission: createdMission},
+				)
+				if err := writeWebSocketJSON(conn, writeMu, response); err != nil {
+					log.Printf("websocket write mission create response failed: %v", err)
+					return
+				}
+
+				broadcastMissionState(wsManager, createdMission, claims.PlayerID, realtimews.MissionEventCreated)
+
+			case realtimews.MessageTypeMissionReady:
+				if err := handleMissionTransition(
+					conn,
+					writeMu,
+					clientMessage.RequestID,
+					claims.PlayerID,
+					gamemission.StatusReady,
+					realtimews.MessageTypeMissionReadyResult,
+					realtimews.MissionEventReady,
+					true,
+					wsManager,
+					squadManager,
+					missionManager,
+				); err != nil {
+					log.Printf("websocket handle mission ready failed: %v", err)
+					return
+				}
+
+			case realtimews.MessageTypeMissionStart:
+				if err := handleMissionTransition(
+					conn,
+					writeMu,
+					clientMessage.RequestID,
+					claims.PlayerID,
+					gamemission.StatusRunning,
+					realtimews.MessageTypeMissionStartResult,
+					realtimews.MissionEventStarted,
+					true,
+					wsManager,
+					squadManager,
+					missionManager,
+				); err != nil {
+					log.Printf("websocket handle mission start failed: %v", err)
+					return
+				}
+
+			case realtimews.MessageTypeMissionFinish:
+				if err := handleMissionTransition(
+					conn,
+					writeMu,
+					clientMessage.RequestID,
+					claims.PlayerID,
+					gamemission.StatusFinished,
+					realtimews.MessageTypeMissionFinishResult,
+					realtimews.MissionEventFinished,
+					false,
+					wsManager,
+					squadManager,
+					missionManager,
+				); err != nil {
+					log.Printf("websocket handle mission finish failed: %v", err)
+					return
+				}
+
+			case realtimews.MessageTypeMissionCancel:
+				if err := handleMissionTransition(
+					conn,
+					writeMu,
+					clientMessage.RequestID,
+					claims.PlayerID,
+					gamemission.StatusCanceled,
+					realtimews.MessageTypeMissionCancelResult,
+					realtimews.MissionEventCanceled,
+					false,
+					wsManager,
+					squadManager,
+					missionManager,
+				); err != nil {
+					log.Printf("websocket handle mission cancel failed: %v", err)
+					return
+				}
+
+			case realtimews.MessageTypeMissionMe:
+				currentMission, err := missionManager.GetByPlayer(claims.PlayerID)
+				if err != nil {
+					if err := writeWebSocketJSON(conn, writeMu, missionErrorMessage(clientMessage.RequestID, err)); err != nil {
+						log.Printf("websocket write mission me error failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				response := realtimews.NewServerMessage(
+					realtimews.MessageTypeMissionMeResult,
+					clientMessage.RequestID,
+					realtimews.MissionData{Mission: currentMission},
+				)
+				if err := writeWebSocketJSON(conn, writeMu, response); err != nil {
+					log.Printf("websocket write mission me response failed: %v", err)
+					return
+				}
+
 			default:
 				errMsg := realtimews.NewErrorMessage(clientMessage.RequestID, 40424, "unsupported websocket message type")
 				if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
@@ -334,7 +523,7 @@ func broadcastSquadState(wsManager *realtimews.Manager, squadState *gamesquad.Sq
 
 	playerIDs := make([]int64, 0, len(squadState.Members))
 	for _, member := range squadState.Members {
-		if member.PlayerID != actorPlayerID {
+		if member.PlayerID != actorPlayerID && member.Online {
 			playerIDs = append(playerIDs, member.PlayerID)
 		}
 	}
@@ -360,6 +549,109 @@ func broadcastSquadState(wsManager *realtimews.Manager, squadState *gamesquad.Sq
 	}
 }
 
+func broadcastMissionState(
+	wsManager *realtimews.Manager,
+	missionState *gamemission.Instance,
+	actorPlayerID int64,
+	event string,
+) {
+	if missionState == nil {
+		return
+	}
+
+	playerIDs := make([]int64, 0, len(missionState.PlayerIDs))
+	for _, playerID := range missionState.PlayerIDs {
+		if playerID != actorPlayerID {
+			playerIDs = append(playerIDs, playerID)
+		}
+	}
+	if len(playerIDs) == 0 {
+		return
+	}
+
+	message := realtimews.NewServerMessage(
+		realtimews.MessageTypeMissionStateChanged,
+		"",
+		realtimews.MissionStateChangedData{
+			Event:         event,
+			ActorPlayerID: actorPlayerID,
+			Mission:       missionState,
+		},
+	)
+
+	failedPlayerIDs := wsManager.BroadcastToPlayers(playerIDs, message)
+	if len(failedPlayerIDs) > 0 {
+		log.Printf("websocket broadcast mission state failed: event=%s actor_player_id=%d failed_player_ids=%v", event, actorPlayerID, failedPlayerIDs)
+	}
+}
+
+func handleMissionTransition(
+	conn *websocket.Conn,
+	writeMu *sync.Mutex,
+	requestID string,
+	playerID int64,
+	target gamemission.Status,
+	resultType string,
+	event string,
+	requireSquadReady bool,
+	wsManager *realtimews.Manager,
+	squadManager *gamesquad.Manager,
+	missionManager *gamemission.Manager,
+) error {
+	squadState, err := squadManager.GetByPlayer(playerID)
+	if err != nil {
+		return writeWebSocketJSON(conn, writeMu, squadErrorMessage(requestID, err))
+	}
+	if squadState.LeaderID != playerID {
+		return writeWebSocketJSON(conn, writeMu, realtimews.NewErrorMessage(requestID, 40332, "squad leader required"))
+	}
+
+	if requireSquadReady {
+		if errMsg := validateSquadReady(requestID, squadState); errMsg != nil {
+			return writeWebSocketJSON(conn, writeMu, *errMsg)
+		}
+	}
+
+	currentMission, err := missionManager.GetByPlayer(playerID)
+	if err != nil {
+		return writeWebSocketJSON(conn, writeMu, missionErrorMessage(requestID, err))
+	}
+	if currentMission.SquadID != squadState.ID {
+		return writeWebSocketJSON(conn, writeMu, realtimews.NewErrorMessage(requestID, 40932, "mission squad changed"))
+	}
+
+	updatedMission, err := missionManager.Transition(currentMission.ID, target)
+	if err != nil {
+		return writeWebSocketJSON(conn, writeMu, missionErrorMessage(requestID, err))
+	}
+
+	response := realtimews.NewServerMessage(
+		resultType,
+		requestID,
+		realtimews.MissionData{Mission: updatedMission},
+	)
+	if err := writeWebSocketJSON(conn, writeMu, response); err != nil {
+		return err
+	}
+
+	broadcastMissionState(wsManager, updatedMission, playerID, event)
+	return nil
+}
+
+func validateSquadReady(requestID string, squadState *gamesquad.Squad) *realtimews.ServerMessage {
+	for _, member := range squadState.Members {
+		if !member.Online {
+			message := realtimews.NewErrorMessage(requestID, 40928, "squad member is offline")
+			return &message
+		}
+		if !member.Ready {
+			message := realtimews.NewErrorMessage(requestID, 40929, "squad members are not ready")
+			return &message
+		}
+	}
+	return nil
+}
+
 func squadErrorMessage(requestID string, err error) realtimews.ServerMessage {
 	switch err {
 	case gamesquad.ErrPlayerAlreadyInSquad:
@@ -372,6 +664,21 @@ func squadErrorMessage(requestID string, err error) realtimews.ServerMessage {
 		return realtimews.NewErrorMessage(requestID, 40927, "squad is full")
 	default:
 		return realtimews.NewErrorMessage(requestID, 50026, "squad operation failed")
+	}
+}
+
+func missionErrorMessage(requestID string, err error) realtimews.ServerMessage {
+	switch err {
+	case gamemission.ErrMissionIDRequired:
+		return realtimews.NewErrorMessage(requestID, 40031, "mission_id required")
+	case gamemission.ErrMissionNotFound:
+		return realtimews.NewErrorMessage(requestID, 40428, "mission instance not found")
+	case gamemission.ErrSquadAlreadyInMission:
+		return realtimews.NewErrorMessage(requestID, 40930, "squad already has active mission")
+	case gamemission.ErrInvalidStateTransition:
+		return realtimews.NewErrorMessage(requestID, 40931, "invalid mission state transition")
+	default:
+		return realtimews.NewErrorMessage(requestID, 50027, "mission operation failed")
 	}
 }
 
