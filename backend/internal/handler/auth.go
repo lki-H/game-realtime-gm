@@ -55,10 +55,20 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	result, err := h.db.ExecContext(
+	tx, err := h.db.BeginTx(c.Request.Context(), nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50002,
+			"message": "create player failed",
+		})
+		return
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(
 		c.Request.Context(),
 		`INSERT INTO players (username, password_hash, nickname, banned_reason)
-		 VALUES (?, ?, ?, '')`,
+         VALUES (?, ?, ?, '')`,
 		req.Username,
 		string(passwordHash),
 		req.Nickname,
@@ -88,8 +98,21 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	if _, err := tx.ExecContext(
+		c.Request.Context(),
+		`INSERT INTO player_assets (player_id, soft_currency)
+         VALUES (?, 0)`,
+		playerID,
+	); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50002,
+			"message": "create player failed",
+		})
+		return
+	}
+
 	var player model.Player
-	err = h.db.QueryRowContext(
+	err = tx.QueryRowContext(
 		c.Request.Context(),
 		`SELECT id, username, nickname, created_at, updated_at, status, banned_reason, banned_at, banned_by_admin_id
          FROM players
@@ -107,6 +130,14 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		&player.BannedByAdminID,
 	)
 	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50002,
+			"message": "create player failed",
+		})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50002,
 			"message": "create player failed",

@@ -97,6 +97,8 @@ Bearer 后面有一个空格。
 50002 create player failed
 ```
 
+Day31 起，注册会在同一个 MySQL 事务中创建 `players` 和零余额 `player_assets` 行；任一步失败都会回滚。注册响应结构不变，也不向客户端返回内部资产表。
+
 ### POST /api/login
 
 用途：玩家登录并获取玩家 token。
@@ -338,7 +340,7 @@ Day 24 起，客户端发送 WebSocket 业务消息时，需要使用统一 JSON
 | `matchmaking.cancel` | 取消当前 queued ticket |
 | `matchmaking.me` | 查询当前或最近 ticket |
 | `matchmaking.state.changed` | 票据超时时主动通知在线玩家 |
-| `settlement.create` | 队长为 finished 任务创建结算记录，需要 `mission_instance_id` 和 `nonce` |
+| `settlement.create` | 队长为 finished 任务创建或重试幂等结算，需要 `mission_instance_id`、`idempotency_key` 和 `nonce` |
 | `settlement.created` | 服务端向其他在线任务参与者广播结算结果 |
 
 Day 27 起，服务端会在小队成员加入、离开、ready 状态变化时，向小队内其他在线成员推送 `squad.state.changed`。小队状态当前保存在 Go 进程内存中，服务重启后会清空。
@@ -348,6 +350,8 @@ Day 28 起，服务端支持小队成员断线/重连、队长转移和任务会
 Day 29 起，服务端使用 Redis 保存 matchmaking ticket、任务等待队列、超时索引和玩家索引，支持查询、取消和超时通知。
 
 Day 30 起，服务端支持 finished 任务的 MySQL 结算记录、每名参与者的 pending 奖励记录、服务端分数计算和 nonce 防重放。
+
+Day 31 起，结算升级为任务级幂等资产事务：重复请求返回已有结果，reward、玩家余额和 asset ledger 同事务提交，只有首次创建会广播 `settlement.created`。
 
 创建小队请求：
 
@@ -719,9 +723,9 @@ Redis key：
 
 当前没有实现 `matched`、凑人算法、小队整体原子入队或匹配成功后自动创建任务会话。
 
-### Day30 Settlement 结算记录
+### Day31 Settlement 幂等资产结算
 
-Day30 的结算入口是 WebSocket 消息，不是 HTTP 接口。只有当前小队队长可以为 finished 任务创建记录。
+结算入口是 WebSocket 消息，不是 HTTP 接口。只有当前小队队长可以为 finished 任务创建或重试结算。
 
 请求：
 
@@ -730,30 +734,30 @@ Day30 的结算入口是 WebSocket 消息，不是 HTTP 接口。只有当前小
   "type": "settlement.create",
   "request_id": "settlement-create-001",
   "data": {
-    "mission_instance_id": "mission_instance_1787389916768074800_339edbf0ed0e8c63",
-    "nonce": "settle_20260822_0001"
+    "mission_instance_id": "mission_instance_1787410586326985400_2575a07be3113b72",
+    "idempotency_key": "settlement_day31_mission_0001",
+    "nonce": "nonce_day31_request_0001"
   }
 }
 ~~~
 
-允许的业务字段只有：
+业务字段：
 
 | 字段 | 说明 |
 | --- | --- |
-| `mission_instance_id` | 当前 Go 进程内 finished 任务会话 ID |
-| `nonce` | 16 至 64 位，只允许字母、数字、下划线和连字符；用于本次请求防重放 |
+| `mission_instance_id` | 当前 Go 进程内 finished 任务会话 ID；数据库 UNIQUE 保证一个任务只结算一次 |
+| `idempotency_key` | 16 至 64 位请求幂等键；同任务重试返回旧结果，跨任务复用返回 `40940` |
+| `nonce` | 16 至 64 位防重放随机值；同一玩家跨任务复用返回 `40937` |
 
-客户端额外提交 `score`、`reward_amount` 等字段会被 DTO 忽略。服务端会校验当前小队、队长身份、任务参与关系、finished 状态和任务时间，然后自行计算通关耗时、分数和奖励。
-
-当前演示计算规则：
+三个值只允许字母、数字、下划线和连字符。客户端额外提交 `score`、`reward_amount` 等字段会被 DTO 忽略。服务端会校验当前小队、队长身份、任务参与关系、finished 状态和任务时间，然后自行计算：
 
 ~~~text
 completion_seconds = ceil(finished_at - started_at)
 score = max(1000 - completion_seconds, 0)
-每名任务参与者生成 100 soft_currency
+每名任务参与者获得 100 soft_currency
 ~~~
 
-发起者成功响应：
+首次成功响应：
 
 ~~~json
 {
@@ -765,50 +769,61 @@ score = max(1000 - completion_seconds, 0)
     "settlement": {
       "record": {
         "id": 1,
-        "mission_instance_id": "mission_instance_1787389916768074800_339edbf0ed0e8c63",
+        "mission_instance_id": "mission_instance_1787410586326985400_2575a07be3113b72",
         "mission_id": "training_ground",
         "squad_id": "squad_1",
         "submitted_by_player_id": 9,
-        "nonce": "settle_20260822_0001",
-        "status": "recorded",
+        "nonce": "nonce_day31_request_0001",
+        "idempotency_key": "settlement_day31_mission_0001",
+        "status": "settled",
         "completion_seconds": 2,
         "score": 998,
-        "created_at": "2026-08-22T17:11:58+08:00",
-        "updated_at": "2026-08-22T17:11:58+08:00"
+        "created_at": "2026-08-22T22:56:28+08:00",
+        "updated_at": "2026-08-22T22:56:28+08:00"
       },
       "rewards": [
         {
           "id": 1,
           "mission_record_id": 1,
-          "mission_instance_id": "mission_instance_1787389916768074800_339edbf0ed0e8c63",
+          "mission_instance_id": "mission_instance_1787410586326985400_2575a07be3113b72",
           "player_id": 9,
           "reward_type": "soft_currency",
           "amount": 100,
-          "status": "pending",
-          "created_at": "2026-08-22T17:11:58+08:00"
-        },
-        {
-          "id": 2,
-          "mission_record_id": 1,
-          "mission_instance_id": "mission_instance_1787389916768074800_339edbf0ed0e8c63",
-          "player_id": 10,
-          "reward_type": "soft_currency",
-          "amount": 100,
-          "status": "pending",
-          "created_at": "2026-08-22T17:11:58+08:00"
+          "status": "granted",
+          "granted_at": "2026-08-22T22:56:28+08:00",
+          "created_at": "2026-08-22T22:56:28+08:00",
+          "updated_at": "2026-08-22T22:56:28+08:00"
         }
       ]
     }
   },
-  "server_time": "2026-08-22T17:11:58+08:00"
+  "server_time": "2026-08-22T22:56:28+08:00"
 }
 ~~~
 
-其他在线任务参与者会收到 `type=settlement.created` 的主动广播，`data.settlement` 与上面的 `settlement.create.result` 完全相同，`request_id` 为空。
+实际 `rewards` 会包含每名任务参与者各一条记录。`player_assets` 当前余额和 `asset_ledger` 审计流水属于服务端内部数据，不放入玩家 WebSocket 响应。
 
-`mission_records.status=recorded` 表示任务结果已经记录；`reward_records.status=pending` 只表示奖励待发，不代表玩家资产已经增加。
+首次结算会向其他在线任务参与者发送 `settlement.created`，其 `data.settlement` 与成功响应相同，`request_id` 为空。相同请求或同一任务换 key/nonce 重试时，服务端返回数据库中的已有 record/reward，ID 保持不变，不重复增加余额，也不再次广播。
 
-Day30 的 `(submitted_by_player_id, nonce)` 唯一约束会拒绝同一玩家重复使用 nonce，并返回 `40937 settlement nonce replayed`。这还不是 `mission_instance_id` 级完整幂等：使用不同 nonce 重复提交同一任务仍可能生成第二份记录，Day31 再实现重复请求返回已有结果、核心资产强事务和奖励流水。
+三层唯一约束：
+
+| 约束 | 作用 |
+| --- | --- |
+| `mission_instance_id` UNIQUE | 业务级最终幂等，一个任务只能有一份结算 |
+| `idempotency_key` UNIQUE | 支持逻辑请求重试并检测跨任务 key 冲突 |
+| `(submitted_by_player_id, nonce)` UNIQUE | 防止同一玩家跨任务重放 nonce |
+
+首次结算在同一个 MySQL 事务中完成：
+
+~~~text
+mission_records.status = settled
+reward_records.status = granted
+SELECT ... FOR UPDATE 锁定 player_assets
+更新 soft_currency
+写入 append-only asset_ledger
+~~~
+
+任一步失败都会整体回滚。当前小队和任务会话仍保存在 Go 进程内存中，服务重启后尚不能恢复旧任务上下文；也尚未提供玩家资产或 GM 流水查询接口。
 
 当前 WebSocket 业务消息错误：
 
@@ -830,6 +845,8 @@ Day30 的 `(submitted_by_player_id, nonce)` 唯一约束会拒绝同一玩家重
 | `40037` | `mission_instance_id required` | 结算请求缺少任务实例 ID |
 | `40038` | `settlement nonce required` | 结算请求缺少 nonce |
 | `40039` | `invalid settlement nonce` | nonce 长度或字符不合法 |
+| `40040` | `idempotency_key required` | 结算请求缺少幂等 key |
+| `40041` | `invalid idempotency_key` | 幂等 key 长度或字符不合法 |
 | `40332` | `squad leader required` | 普通成员尝试创建或改变任务状态 |
 | `40333` | `settlement leader required` | 普通成员尝试创建结算记录 |
 | `40334` | `player not in mission` | 发起者不在该任务的参与者快照中 |
@@ -853,6 +870,7 @@ Day30 的 `(submitted_by_player_id, nonce)` 唯一约束会拒绝同一玩家重
 | `40937` | `settlement nonce replayed` | 同一玩家重复使用已记录 nonce |
 | `40938` | `invalid mission times` | 任务开始、结束时间不合法 |
 | `40939` | `settlement mission squad changed` | 当前小队与任务创建时的小队不一致 |
+| `40940` | `idempotency_key belongs to another mission` | 同一个幂等 key 被用于另一个任务 |
 | `50024` | `update online status failed` | 连接建立后更新 Redis 在线状态失败 |
 | `50025` | `generate websocket connection id failed` | 服务端生成 WebSocket 连接 ID 失败 |
 | `50026` | `squad operation failed` | 小队操作发生未预期的服务端错误 |
@@ -933,14 +951,19 @@ WebSocket 验证重点：
 29. 超时后通过 matchmaking.me 查询 timeout ticket，并确认可以创建新 ticket。
 30. 使用 Redis CLI 确认 canceled/timeout ticket 已离开任务队列和超时索引，Hash/玩家索引短期保留。
 31. 验证 40032、40033、40034、40035 和 40429 错误分支。
-32. 两名玩家建队并完成 `mission.create -> ready -> start -> finish`，记录 finished 任务实例 ID。
-33. 普通成员发送 `settlement.create`，确认返回 `40333 settlement leader required`。
-34. 队长发送结算请求并额外伪造 score/reward 字段，确认服务端返回 `recorded`、服务端计算分数和两条 `pending` 奖励。
-35. 确认另一名在线任务参与者收到 `settlement.created`，且 `request_id` 为空。
-36. 原样重放相同 nonce，确认返回 `40937`，MySQL 中任务记录仍为 1、奖励记录仍为 2。
-37. 验证缺少任务 ID、缺少 nonce、非法 nonce 和未 finished 任务分别返回 `40037`、`40038`、`40039`、`40936`。
-38. 查询 `mission_records` 和 `reward_records`，确认记录关联、状态、奖励玩家和数量正确。
-39. 使用主键和 nonce 精确清理本次测试记录，不执行无条件 DELETE、TRUNCATE 或 DROP TABLE。
+32. 注册临时玩家并确认 `players` 与零余额 `player_assets` 在同一事务中创建，重复注册仍返回 `40901`。
+33. 两名玩家建队并完成 `mission.create -> ready -> start -> finish`，记录 finished 任务实例 ID。
+34. 普通成员发送 `settlement.create`，确认返回 `40333 settlement leader required`。
+35. 验证缺少或非法 `idempotency_key` 分别返回 `40040`、`40041`。
+36. 临时删除第二名测试玩家的零余额资产行后提交结算，确认返回 `50029`，任务、reward、ledger 和第一名玩家余额全部回滚。
+37. 恢复资产行并原样重试，确认返回 `settled`、服务端分数和两条 `granted` 奖励，两名玩家余额各增加 100。
+38. 确认另一名在线任务参与者只在首次成功时收到一次 `settlement.created`，且 `request_id` 为空。
+39. 原样重试相同请求，确认返回相同 record/reward ID，余额和四表记录数量不增加，也不再次广播。
+40. 对同一任务换新 key 和 nonce，确认仍返回第一次已有结果。
+41. 创建第二个 finished 任务，复用第一个任务的 key 返回 `40940`，复用 nonce 返回 `40937`。
+42. 查询 `mission_records`、`reward_records`、`player_assets` 和 `asset_ledger`，确认 settled/granted、余额和流水一一对应。
+43. 验证缺少任务 ID、缺少 nonce、非法 nonce 和未 finished 任务分别返回 `40037`、`40038`、`40039`、`40936`。
+44. 使用唯一 key、主键和临时玩家 ID 精确清理测试数据，不执行无条件 DELETE、TRUNCATE 或 DROP TABLE。
 ```
 
 主要错误：
@@ -966,6 +989,7 @@ Day 27 已新增小队状态广播；加入、离开和 ready 状态变化会通
 Day 28 已新增小队成员在线状态、断线重连、队长转移和任务会话状态机。
 Day 29 已新增 Redis matchmaking ticket、队列位置、取消、超时通知和残留清理。
 Day 30 已新增 finished 任务结算记录、pending 奖励记录、服务端分数计算、nonce 防重放和结算广播。
+Day 31 已新增任务级幂等、重复请求返回已有结果、player_assets、granted reward、asset_ledger 和核心资产强事务。
 online_players 表示当前 Go 进程内管理器记录的在线玩家连接数量。
 online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
 同一个玩家重复连接时，旧连接会被新连接替换；连接管理器通过 connection_id 避免旧连接断开时误注销新连接。
@@ -973,7 +997,7 @@ online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
 当前小队状态只保存在 Go 进程内存，服务重启后会清空。
 当前任务会话只保存在 Go 进程内存；它是业务生命周期元数据，不是战斗服进程。
 当前 matchmaking ticket 保存在 Redis，支持 queued/canceled/timeout；尚未实现 matched 和真正撮合成功。
-当前已支持小队、任务会话、匹配超时和结算广播；结算只记录 pending reward，尚未执行资产入账，排行榜消息也尚未实现。
+当前已支持小队、任务会话、匹配超时和幂等资产结算；排行榜消息、玩家资产查询、GM 流水查询和服务重启后的任务恢复尚未实现。
 服务重启后，内存连接状态会清空。
 本地学习阶段使用 query 参数传 token；不要在日志里打印完整 token。
 ```
@@ -1461,14 +1485,14 @@ GET /api/admin/operation-logs/1
 ### 1. 启动依赖
 
 ```powershell
-cd E:\game-realtime-gm\deploy
+cd .\deploy
 docker compose up -d
 ```
 
 ### 2. 启动后端
 
 ```powershell
-cd E:\game-realtime-gm\backend
+cd ..\backend
 go run .\cmd\server
 ```
 

@@ -159,6 +159,7 @@ type MatchmakingStateChangedData struct {
 
 type SettlementCreateRequest struct {
 	MissionInstanceID string `json:"mission_instance_id"`
+	IdempotencyKey    string `json:"idempotency_key"`
 	Nonce             string `json:"nonce"`
 }
 

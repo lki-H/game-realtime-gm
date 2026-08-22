@@ -625,11 +625,12 @@ func WebSocketEcho(
 					continue
 				}
 
-				result, err := settlementService.Create(
+				result, created, err := settlementService.Create(
 					c.Request.Context(),
 					claims.PlayerID,
 					squadState.ID,
 					request.MissionInstanceID,
+					request.IdempotencyKey,
 					request.Nonce,
 				)
 				if err != nil {
@@ -650,7 +651,9 @@ func WebSocketEcho(
 					return
 				}
 
-				broadcastSettlementCreated(wsManager, result, claims.PlayerID)
+				if created {
+					broadcastSettlementCreated(wsManager, result, claims.PlayerID)
+				}
 
 			default:
 				errMsg := realtimews.NewErrorMessage(clientMessage.RequestID, 40424, "unsupported websocket message type")
@@ -888,10 +891,16 @@ func settlementErrorMessage(requestID string, err error) realtimews.ServerMessag
 		return realtimews.NewErrorMessage(requestID, 40038, "settlement nonce required")
 	case gamesettlement.ErrInvalidNonce:
 		return realtimews.NewErrorMessage(requestID, 40039, "invalid settlement nonce")
+	case gamesettlement.ErrIdempotencyKeyRequired:
+		return realtimews.NewErrorMessage(requestID, 40040, "idempotency_key required")
+	case gamesettlement.ErrInvalidIdempotencyKey:
+		return realtimews.NewErrorMessage(requestID, 40041, "invalid idempotency_key")
 	case gamesettlement.ErrMissionNotFound:
 		return realtimews.NewErrorMessage(requestID, 40430, "settlement mission not found")
 	case gamesettlement.ErrMissionSquadChanged:
 		return realtimews.NewErrorMessage(requestID, 40939, "settlement mission squad changed")
+	case gamesettlement.ErrIdempotencyKeyConflict:
+		return realtimews.NewErrorMessage(requestID, 40940, "idempotency_key belongs to another mission")
 	case gamesettlement.ErrPlayerNotInMission:
 		return realtimews.NewErrorMessage(requestID, 40334, "player not in mission")
 	case gamesettlement.ErrMissionNotFinished:

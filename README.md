@@ -2,14 +2,15 @@
 
 这是一个持续迭代的 Go 后端学习项目，用于实现游戏业务中的玩家服务、管理员运营能力、在线状态和实时小队连接。
 
-当前代码已完成 Day 30：在小队、任务会话和 Redis matchmaking ticket 基础上，新增 MySQL 任务结算记录、待发奖励记录、服务端分数计算和 nonce 防重放。
+当前代码已完成 Day 31：在任务结算记录基础上，新增任务级幂等、重复请求返回已有结果、玩家软货币强事务入账和 append-only 资产流水。
 
 ## 当前边界
 
 - 当前仓库是单体 Go 游戏业务服务，不是完整商业游戏服务器。
 - 小队状态保存在 Go 进程内存中，服务重启后会清空。
 - WebSocket 当前负责玩家连接、在线状态、小队、任务会话、匹配票据和结算记录消息。
-- MySQL 已保存结算记录与 pending 奖励记录，但尚未实现玩家资产入账和任务级完整幂等。
+- MySQL 使用三层唯一约束保护结算幂等，并在同一事务中提交任务结果、granted reward、玩家余额和资产流水。
+- 当前尚未提供排行榜、玩家资产查询、GM 流水查询或服务重启后的任务恢复。
 - 当前不包含逐帧战斗模拟、物理或技能判定、怪物 AI、客户端预测及商业级网络同步。
 
 ## 技术栈
@@ -33,6 +34,7 @@
 - 查询和修改当前玩家资料
 - 玩家列表和玩家详情
 - 被封禁玩家禁止登录
+- 玩家注册与零余额 `player_assets` 行在同一个 MySQL 事务中创建
 
 ### GM 管理
 
@@ -64,11 +66,13 @@
 - 30 秒本地演示超时和 `matchmaking.state.changed` 通知
 - canceled/timeout 从两个 ZSet 移除，终态 ticket 短期保留
 - 当前明确未实现 `matched` 和真正撮合算法
-- `settlement.create` 只允许当前小队队长为 finished 任务创建结算记录
+- `settlement.create` 只允许当前小队队长为 finished 任务创建或重试幂等结算
 - 服务端计算通关耗时、分数和固定奖励，忽略客户端额外提交的 score/reward 字段
-- `mission_records.status=recorded`，每名参与者生成一条 `reward_records.status=pending`
-- `(submitted_by_player_id, nonce)` 唯一约束拒绝同一玩家重复使用 nonce
-- 其他在线任务参与者收到 `settlement.created`
+- `mission_instance_id`、`idempotency_key` 和玩家 nonce 三层唯一约束
+- 相同请求或同一任务换 key 重试时返回已有结果，不重复发奖
+- `mission_records.status=settled`，每名参与者生成一条 `reward_records.status=granted`
+- `SELECT ... FOR UPDATE` 锁定资产行，任务、reward、余额和 ledger 同事务提交或回滚
+- 其他在线任务参与者只在首次结算时收到 `settlement.created`
 
 ## 数据职责
 
@@ -77,8 +81,10 @@ MySQL
   players                 玩家账号、资料和封禁状态
   admins                  管理员账号和角色
   admin_operation_logs    GM 操作审计日志
-  mission_records         finished 任务的结算记录
-  reward_records          每名参与者的 pending 待发奖励
+  mission_records         finished 任务的幂等结算记录
+  reward_records          每名参与者的 granted 奖励记录
+  player_assets           玩家当前 soft_currency 余额
+  asset_ledger            append-only 资产变更流水
 
 Redis
   online:player:<id>      当前玩家 WebSocket 在线状态和连接 ID
@@ -102,13 +108,13 @@ game-realtime-gm/
 │       ├── auth/            JWT 逻辑
 │       ├── cache/           Redis 连接
 │       ├── config/          环境变量配置
-│       ├── database/        MySQL 连接、schema 和 seed
+│       ├── database/        MySQL 连接、schema、seed 和 migration
 │       ├── handler/         HTTP 与 WebSocket handler
 │       ├── matchmaking/     Redis 匹配票据、取消和超时
 │       ├── middleware/      玩家和管理员鉴权
 │       ├── model/           数据模型
 │       ├── mission/         任务会话业务状态机
-│       ├── settlement/      结算记录、待发奖励和 nonce 防重放
+│       ├── settlement/      幂等结算、资产强事务和已有结果查询
 │       ├── router/          路由注册
 │       ├── squad/           小队内存状态
 │       └── ws/              WebSocket 协议与连接管理
@@ -152,6 +158,15 @@ Get-Content .\backend\internal\database\schema.sql -Raw |
 Get-Content .\backend\internal\database\seed.sql -Raw |
   docker exec -i game_realtime_mysql mysql -ugame -pgame123456 game_realtime
 ```
+
+如果本地数据库已经运行过 Day30 schema，只执行一次 Day31 增量迁移：
+
+```powershell
+Get-Content .\backend\internal\database\migrations\day31_settlement_assets.sql -Raw |
+  docker exec -i game_realtime_mysql mysql -ugame -pgame123456 game_realtime
+```
+
+全新数据库只需要执行最新 `schema.sql`，不要再重复执行 Day31 migration。
 
 默认管理员仅用于本地开发：
 
