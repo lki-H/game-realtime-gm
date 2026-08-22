@@ -2,13 +2,14 @@
 
 这是一个持续迭代的 Go 后端学习项目，用于实现游戏业务中的玩家服务、管理员运营能力、在线状态和实时小队连接。
 
-当前代码已完成 Day 29：在小队与任务会话基础上，新增 Redis matchmaking ticket、队列位置、取消、超时通知和残留清理。
+当前代码已完成 Day 30：在小队、任务会话和 Redis matchmaking ticket 基础上，新增 MySQL 任务结算记录、待发奖励记录、服务端分数计算和 nonce 防重放。
 
 ## 当前边界
 
 - 当前仓库是单体 Go 游戏业务服务，不是完整商业游戏服务器。
 - 小队状态保存在 Go 进程内存中，服务重启后会清空。
-- WebSocket 当前负责玩家连接、在线状态和小队基础消息。
+- WebSocket 当前负责玩家连接、在线状态、小队、任务会话、匹配票据和结算记录消息。
+- MySQL 已保存结算记录与 pending 奖励记录，但尚未实现玩家资产入账和任务级完整幂等。
 - 当前不包含逐帧战斗模拟、物理或技能判定、怪物 AI、客户端预测及商业级网络同步。
 
 ## 技术栈
@@ -63,6 +64,11 @@
 - 30 秒本地演示超时和 `matchmaking.state.changed` 通知
 - canceled/timeout 从两个 ZSet 移除，终态 ticket 短期保留
 - 当前明确未实现 `matched` 和真正撮合算法
+- `settlement.create` 只允许当前小队队长为 finished 任务创建结算记录
+- 服务端计算通关耗时、分数和固定奖励，忽略客户端额外提交的 score/reward 字段
+- `mission_records.status=recorded`，每名参与者生成一条 `reward_records.status=pending`
+- `(submitted_by_player_id, nonce)` 唯一约束拒绝同一玩家重复使用 nonce
+- 其他在线任务参与者收到 `settlement.created`
 
 ## 数据职责
 
@@ -71,13 +77,17 @@ MySQL
   players                 玩家账号、资料和封禁状态
   admins                  管理员账号和角色
   admin_operation_logs    GM 操作审计日志
+  mission_records         finished 任务的结算记录
+  reward_records          每名参与者的 pending 待发奖励
 
 Redis
   online:player:<id>      当前玩家 WebSocket 在线状态和连接 ID
+  matchmaking:*           匹配票据、任务等待队列、超时索引和玩家索引
 
 Go 进程内存
   WebSocket 连接管理
   小队及成员准备状态
+  任务会话状态机
 ```
 
 ## 目录结构
@@ -98,6 +108,7 @@ game-realtime-gm/
 │       ├── middleware/      玩家和管理员鉴权
 │       ├── model/           数据模型
 │       ├── mission/         任务会话业务状态机
+│       ├── settlement/      结算记录、待发奖励和 nonce 防重放
 │       ├── router/          路由注册
 │       ├── squad/           小队内存状态
 │       └── ws/              WebSocket 协议与连接管理

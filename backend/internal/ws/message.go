@@ -6,6 +6,7 @@ import (
 
 	"game-realtime-gm/backend/internal/matchmaking"
 	"game-realtime-gm/backend/internal/mission"
+	"game-realtime-gm/backend/internal/model"
 	"game-realtime-gm/backend/internal/squad"
 )
 
@@ -46,6 +47,9 @@ const (
 	MessageTypeMatchmakingMe            = "matchmaking.me"
 	MessageTypeMatchmakingMeResult      = "matchmaking.me.result"
 	MessageTypeMatchmakingStateChanged  = "matchmaking.state.changed"
+	MessageTypeSettlementCreate         = "settlement.create"
+	MessageTypeSettlementCreateResult   = "settlement.create.result"
+	MessageTypeSettlementCreated        = "settlement.created"
 )
 
 const (
@@ -151,6 +155,19 @@ type MatchmakingData struct {
 type MatchmakingStateChangedData struct {
 	Event  string              `json:"event"`
 	Ticket *matchmaking.Ticket `json:"ticket,omitempty"`
+}
+
+type SettlementCreateRequest struct {
+	MissionInstanceID string `json:"mission_instance_id"`
+	Nonce             string `json:"nonce"`
+}
+
+type SettlementData struct {
+	Settlement *model.SettlementResult `json:"settlement,omitempty"`
+}
+
+type SettlementCreatedData struct {
+	Settlement *model.SettlementResult `json:"settlement,omitempty"`
 }
 
 func NewServerMessage(messageType string, requestID string, data any) ServerMessage {

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"game-realtime-gm/backend/internal/model"
 	"log"
 	"net/http"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	tokenauth "game-realtime-gm/backend/internal/auth"
 	gamematchmaking "game-realtime-gm/backend/internal/matchmaking"
 	gamemission "game-realtime-gm/backend/internal/mission"
+	gamesettlement "game-realtime-gm/backend/internal/settlement"
 	gamesquad "game-realtime-gm/backend/internal/squad"
 	realtimews "game-realtime-gm/backend/internal/ws"
 
@@ -42,6 +44,7 @@ func WebSocketEcho(
 	squadManager *gamesquad.Manager,
 	missionManager *gamemission.Manager,
 	matchmakingManager *gamematchmaking.Manager,
+	settlementService *gamesettlement.Service,
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, ok := websocketPlayerClaims(c, jwtSecret)
@@ -594,6 +597,61 @@ func WebSocketEcho(
 					return
 				}
 
+			case realtimews.MessageTypeSettlementCreate:
+				var request realtimews.SettlementCreateRequest
+				if err := json.Unmarshal(clientMessage.Data, &request); err != nil {
+					errMsg := realtimews.NewErrorMessage(clientMessage.RequestID, 40036, "invalid settlement create data")
+					if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+						log.Printf("websocket write settlement invalid data failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				squadState, err := squadManager.GetByPlayer(claims.PlayerID)
+				if err != nil {
+					if err := writeWebSocketJSON(conn, writeMu, squadErrorMessage(clientMessage.RequestID, err)); err != nil {
+						log.Printf("websocket write settlement squad error failed: %v", err)
+						return
+					}
+					continue
+				}
+				if squadState.LeaderID != claims.PlayerID {
+					errMsg := realtimews.NewErrorMessage(clientMessage.RequestID, 40333, "settlement leader required")
+					if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+						log.Printf("websocket write settlement leader error failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				result, err := settlementService.Create(
+					c.Request.Context(),
+					claims.PlayerID,
+					squadState.ID,
+					request.MissionInstanceID,
+					request.Nonce,
+				)
+				if err != nil {
+					if err := writeWebSocketJSON(conn, writeMu, settlementErrorMessage(clientMessage.RequestID, err)); err != nil {
+						log.Printf("websocket write settlement create error failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				response := realtimews.NewServerMessage(
+					realtimews.MessageTypeSettlementCreateResult,
+					clientMessage.RequestID,
+					realtimews.SettlementData{Settlement: result},
+				)
+				if err := writeWebSocketJSON(conn, writeMu, response); err != nil {
+					log.Printf("websocket write settlement create response failed: %v", err)
+					return
+				}
+
+				broadcastSettlementCreated(wsManager, result, claims.PlayerID)
+
 			default:
 				errMsg := realtimews.NewErrorMessage(clientMessage.RequestID, 40424, "unsupported websocket message type")
 				if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
@@ -671,6 +729,36 @@ func broadcastMissionState(
 	failedPlayerIDs := wsManager.BroadcastToPlayers(playerIDs, message)
 	if len(failedPlayerIDs) > 0 {
 		log.Printf("websocket broadcast mission state failed: event=%s actor_player_id=%d failed_player_ids=%v", event, actorPlayerID, failedPlayerIDs)
+	}
+}
+
+func broadcastSettlementCreated(wsManager *realtimews.Manager, result *model.SettlementResult, actorPlayerID int64) {
+	if result == nil {
+		return
+	}
+
+	playerIDs := make([]int64, 0, len(result.Rewards))
+	for _, reward := range result.Rewards {
+		if reward.PlayerID != actorPlayerID {
+			playerIDs = append(playerIDs, reward.PlayerID)
+		}
+	}
+	if len(playerIDs) == 0 {
+		return
+	}
+
+	message := realtimews.NewServerMessage(
+		realtimews.MessageTypeSettlementCreated,
+		"",
+		realtimews.SettlementCreatedData{Settlement: result},
+	)
+	failedPlayerIDs := wsManager.BroadcastToPlayers(playerIDs, message)
+	if len(failedPlayerIDs) > 0 {
+		log.Printf(
+			"websocket broadcast settlement failed: mission_instance_id=%s failed_player_ids=%v",
+			result.Record.MissionInstanceID,
+			failedPlayerIDs,
+		)
 	}
 }
 
@@ -789,6 +877,31 @@ func matchmakingErrorMessage(requestID string, err error) realtimews.ServerMessa
 		return realtimews.NewErrorMessage(requestID, 40935, "matchmaking ticket expired")
 	default:
 		return realtimews.NewErrorMessage(requestID, 50028, "matchmaking operation failed")
+	}
+}
+
+func settlementErrorMessage(requestID string, err error) realtimews.ServerMessage {
+	switch err {
+	case gamesettlement.ErrMissionInstanceIDRequired:
+		return realtimews.NewErrorMessage(requestID, 40037, "mission_instance_id required")
+	case gamesettlement.ErrNonceRequired:
+		return realtimews.NewErrorMessage(requestID, 40038, "settlement nonce required")
+	case gamesettlement.ErrInvalidNonce:
+		return realtimews.NewErrorMessage(requestID, 40039, "invalid settlement nonce")
+	case gamesettlement.ErrMissionNotFound:
+		return realtimews.NewErrorMessage(requestID, 40430, "settlement mission not found")
+	case gamesettlement.ErrMissionSquadChanged:
+		return realtimews.NewErrorMessage(requestID, 40939, "settlement mission squad changed")
+	case gamesettlement.ErrPlayerNotInMission:
+		return realtimews.NewErrorMessage(requestID, 40334, "player not in mission")
+	case gamesettlement.ErrMissionNotFinished:
+		return realtimews.NewErrorMessage(requestID, 40936, "mission not finished")
+	case gamesettlement.ErrNonceReplayed:
+		return realtimews.NewErrorMessage(requestID, 40937, "settlement nonce replayed")
+	case gamesettlement.ErrInvalidMissionTimes:
+		return realtimews.NewErrorMessage(requestID, 40938, "invalid mission times")
+	default:
+		return realtimews.NewErrorMessage(requestID, 50029, "settlement operation failed")
 	}
 }
 

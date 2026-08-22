@@ -1,6 +1,9 @@
 package mission
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+
 	"errors"
 	"fmt"
 	"strings"
@@ -41,7 +44,6 @@ type Instance struct {
 
 type Manager struct {
 	mu            sync.RWMutex
-	nextID        int64
 	instances     map[string]*Instance
 	squadMission  map[string]string
 	playerMission map[int64]string
@@ -49,7 +51,6 @@ type Manager struct {
 
 func NewManager() *Manager {
 	return &Manager{
-		nextID:        1,
 		instances:     make(map[string]*Instance),
 		squadMission:  make(map[string]string),
 		playerMission: make(map[int64]string),
@@ -76,8 +77,10 @@ func (m *Manager) Create(missionID string, squadID string, playerIDs []int64) (*
 	}
 
 	now := time.Now()
-	instanceID := fmt.Sprintf("mission_instance_%d", m.nextID)
-	m.nextID++
+	instanceID, err := newInstanceID(now)
+	if err != nil {
+		return nil, err
+	}
 
 	instance := &Instance{
 		ID:        instanceID,
@@ -156,6 +159,29 @@ func (m *Manager) GetBySquad(squadID string) (*Instance, error) {
 	}
 
 	return cloneInstance(instance), nil
+}
+
+func (m *Manager) GetByID(instanceID string) (*Instance, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	instance, exists := m.instances[instanceID]
+	if !exists {
+		return nil, ErrMissionNotFound
+	}
+	return cloneInstance(instance), nil
+}
+
+func newInstanceID(now time.Time) (string, error) {
+	randomBytes := make([]byte, 8)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(
+		"mission_instance_%d_%s",
+		now.UnixNano(),
+		hex.EncodeToString(randomBytes),
+	), nil
 }
 
 func canTransition(current Status, target Status) bool {

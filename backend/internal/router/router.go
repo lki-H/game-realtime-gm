@@ -14,6 +14,7 @@ import (
 	"game-realtime-gm/backend/internal/matchmaking"
 	"game-realtime-gm/backend/internal/middleware"
 	"game-realtime-gm/backend/internal/mission"
+	"game-realtime-gm/backend/internal/settlement"
 	"game-realtime-gm/backend/internal/squad"
 	"game-realtime-gm/backend/internal/ws"
 
@@ -33,6 +34,7 @@ func New(ctx context.Context, db *sql.DB, redisClient *redis.Client, cfg config.
 	squadManager := squad.NewManager()
 	missionManager := mission.NewManager()
 	matchmakingManager := matchmaking.NewManager(redisClient)
+	settlementService := settlement.NewService(db, missionManager)
 
 	r.GET("/health", handler.Health)
 	r.GET("/ws", handler.WebSocketEcho(
@@ -42,6 +44,7 @@ func New(ctx context.Context, db *sql.DB, redisClient *redis.Client, cfg config.
 		squadManager,
 		missionManager,
 		matchmakingManager,
+		settlementService,
 	))
 
 	go matchmakingManager.RunTimeoutLoop(

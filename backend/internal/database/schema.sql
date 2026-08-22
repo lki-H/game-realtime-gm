@@ -43,3 +43,39 @@ CREATE TABLE IF NOT EXISTS admin_operation_logs (
     KEY idx_admin_operation_logs_action (action),
     KEY idx_admin_operation_logs_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+CREATE TABLE IF NOT EXISTS mission_records (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    mission_instance_id VARCHAR(64) NOT NULL,
+    mission_id VARCHAR(64) NOT NULL,
+    squad_id VARCHAR(64) NOT NULL,
+    submitted_by_player_id BIGINT NOT NULL,
+    nonce VARCHAR(64) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'recorded',
+    completion_seconds BIGINT NOT NULL,
+    score BIGINT NOT NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_mission_records_player_nonce (submitted_by_player_id, nonce),
+    KEY idx_mission_records_instance_id (mission_instance_id),
+    KEY idx_mission_records_player_id (submitted_by_player_id),
+    KEY idx_mission_records_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS reward_records (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    mission_record_id BIGINT NOT NULL,
+    mission_instance_id VARCHAR(64) NOT NULL,
+    player_id BIGINT NOT NULL,
+    reward_type VARCHAR(64) NOT NULL,
+    amount BIGINT NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    KEY idx_reward_records_mission_record_id (mission_record_id),
+    KEY idx_reward_records_instance_id (mission_instance_id),
+    KEY idx_reward_records_player_id (player_id),
+    KEY idx_reward_records_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

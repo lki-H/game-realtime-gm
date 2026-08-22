@@ -338,12 +338,16 @@ Day 24 起，客户端发送 WebSocket 业务消息时，需要使用统一 JSON
 | `matchmaking.cancel` | 取消当前 queued ticket |
 | `matchmaking.me` | 查询当前或最近 ticket |
 | `matchmaking.state.changed` | 票据超时时主动通知在线玩家 |
+| `settlement.create` | 队长为 finished 任务创建结算记录，需要 `mission_instance_id` 和 `nonce` |
+| `settlement.created` | 服务端向其他在线任务参与者广播结算结果 |
 
 Day 27 起，服务端会在小队成员加入、离开、ready 状态变化时，向小队内其他在线成员推送 `squad.state.changed`。小队状态当前保存在 Go 进程内存中，服务重启后会清空。
 
 Day 28 起，服务端支持小队成员断线/重连、队长转移和任务会话状态机。任务会话同样保存在 Go 进程内存中，服务重启后会清空。
 
 Day 29 起，服务端使用 Redis 保存 matchmaking ticket、任务等待队列、超时索引和玩家索引，支持查询、取消和超时通知。
+
+Day 30 起，服务端支持 finished 任务的 MySQL 结算记录、每名参与者的 pending 奖励记录、服务端分数计算和 nonce 防重放。
 
 创建小队请求：
 
@@ -526,7 +530,7 @@ waiting -> canceled
   "message": "ok",
   "data": {
     "mission": {
-      "id": "mission_instance_1",
+      "id": "mission_instance_1787389916768074800_339edbf0ed0e8c63",
       "mission_id": "training_ground",
       "squad_id": "squad_1",
       "player_ids": [1, 2],
@@ -569,7 +573,7 @@ waiting -> canceled
     "event": "mission_started",
     "actor_player_id": 1,
     "mission": {
-      "id": "mission_instance_1",
+      "id": "mission_instance_1787389916768074800_339edbf0ed0e8c63",
       "mission_id": "training_ground",
       "squad_id": "squad_1",
       "player_ids": [1, 2],
@@ -715,6 +719,97 @@ Redis key：
 
 当前没有实现 `matched`、凑人算法、小队整体原子入队或匹配成功后自动创建任务会话。
 
+### Day30 Settlement 结算记录
+
+Day30 的结算入口是 WebSocket 消息，不是 HTTP 接口。只有当前小队队长可以为 finished 任务创建记录。
+
+请求：
+
+~~~json
+{
+  "type": "settlement.create",
+  "request_id": "settlement-create-001",
+  "data": {
+    "mission_instance_id": "mission_instance_1787389916768074800_339edbf0ed0e8c63",
+    "nonce": "settle_20260822_0001"
+  }
+}
+~~~
+
+允许的业务字段只有：
+
+| 字段 | 说明 |
+| --- | --- |
+| `mission_instance_id` | 当前 Go 进程内 finished 任务会话 ID |
+| `nonce` | 16 至 64 位，只允许字母、数字、下划线和连字符；用于本次请求防重放 |
+
+客户端额外提交 `score`、`reward_amount` 等字段会被 DTO 忽略。服务端会校验当前小队、队长身份、任务参与关系、finished 状态和任务时间，然后自行计算通关耗时、分数和奖励。
+
+当前演示计算规则：
+
+~~~text
+completion_seconds = ceil(finished_at - started_at)
+score = max(1000 - completion_seconds, 0)
+每名任务参与者生成 100 soft_currency
+~~~
+
+发起者成功响应：
+
+~~~json
+{
+  "type": "settlement.create.result",
+  "request_id": "settlement-create-001",
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "settlement": {
+      "record": {
+        "id": 1,
+        "mission_instance_id": "mission_instance_1787389916768074800_339edbf0ed0e8c63",
+        "mission_id": "training_ground",
+        "squad_id": "squad_1",
+        "submitted_by_player_id": 9,
+        "nonce": "settle_20260822_0001",
+        "status": "recorded",
+        "completion_seconds": 2,
+        "score": 998,
+        "created_at": "2026-08-22T17:11:58+08:00",
+        "updated_at": "2026-08-22T17:11:58+08:00"
+      },
+      "rewards": [
+        {
+          "id": 1,
+          "mission_record_id": 1,
+          "mission_instance_id": "mission_instance_1787389916768074800_339edbf0ed0e8c63",
+          "player_id": 9,
+          "reward_type": "soft_currency",
+          "amount": 100,
+          "status": "pending",
+          "created_at": "2026-08-22T17:11:58+08:00"
+        },
+        {
+          "id": 2,
+          "mission_record_id": 1,
+          "mission_instance_id": "mission_instance_1787389916768074800_339edbf0ed0e8c63",
+          "player_id": 10,
+          "reward_type": "soft_currency",
+          "amount": 100,
+          "status": "pending",
+          "created_at": "2026-08-22T17:11:58+08:00"
+        }
+      ]
+    }
+  },
+  "server_time": "2026-08-22T17:11:58+08:00"
+}
+~~~
+
+其他在线任务参与者会收到 `type=settlement.created` 的主动广播，`data.settlement` 与上面的 `settlement.create.result` 完全相同，`request_id` 为空。
+
+`mission_records.status=recorded` 表示任务结果已经记录；`reward_records.status=pending` 只表示奖励待发，不代表玩家资产已经增加。
+
+Day30 的 `(submitted_by_player_id, nonce)` 唯一约束会拒绝同一玩家重复使用 nonce，并返回 `40937 settlement nonce replayed`。这还不是 `mission_instance_id` 级完整幂等：使用不同 nonce 重复提交同一任务仍可能生成第二份记录，Day31 再实现重复请求返回已有结果、核心资产强事务和奖励流水。
+
 当前 WebSocket 业务消息错误：
 
 | code | message | 场景 |
@@ -731,11 +826,18 @@ Redis key：
 | `40033` | `matchmaking mission_id required` | 匹配 mission_id 为空 |
 | `40034` | `matchmaking role required` | 匹配 role 为空 |
 | `40035` | `invalid matchmaking value` | mission_id/role 含非法字符或过长 |
+| `40036` | `invalid settlement create data` | `settlement.create.data` 不是合法对象 |
+| `40037` | `mission_instance_id required` | 结算请求缺少任务实例 ID |
+| `40038` | `settlement nonce required` | 结算请求缺少 nonce |
+| `40039` | `invalid settlement nonce` | nonce 长度或字符不合法 |
 | `40332` | `squad leader required` | 普通成员尝试创建或改变任务状态 |
+| `40333` | `settlement leader required` | 普通成员尝试创建结算记录 |
+| `40334` | `player not in mission` | 发起者不在该任务的参与者快照中 |
 | `40426` | `player not in squad` | 玩家不在小队中，却执行离开、准备或查询当前小队 |
 | `40427` | `squad not found` | 指定小队不存在 |
 | `40428` | `mission instance not found` | 玩家没有任务会话 |
 | `40429` | `matchmaking ticket not found` | 玩家没有可查询 ticket |
+| `40430` | `settlement mission not found` | 当前进程内找不到指定任务会话 |
 | `40424` | `unsupported websocket message type` | `type` 暂未支持 |
 | `40926` | `player already in squad` | 玩家已经在小队中，又尝试创建或加入小队 |
 | `40927` | `squad is full` | 小队人数已满 |
@@ -747,11 +849,16 @@ Redis key：
 | `40933` | `player already queued` | 玩家重复入队 |
 | `40934` | `matchmaking ticket not queued` | 已取消/超时 ticket 再次取消 |
 | `40935` | `matchmaking ticket expired` | 取消时 ticket 已过期 |
+| `40936` | `mission not finished` | 任务尚未进入 finished 状态 |
+| `40937` | `settlement nonce replayed` | 同一玩家重复使用已记录 nonce |
+| `40938` | `invalid mission times` | 任务开始、结束时间不合法 |
+| `40939` | `settlement mission squad changed` | 当前小队与任务创建时的小队不一致 |
 | `50024` | `update online status failed` | 连接建立后更新 Redis 在线状态失败 |
 | `50025` | `generate websocket connection id failed` | 服务端生成 WebSocket 连接 ID 失败 |
 | `50026` | `squad operation failed` | 小队操作发生未预期的服务端错误 |
 | `50027` | `mission operation failed` | 任务操作发生未预期的服务端错误 |
 | `50028` | `matchmaking operation failed` | Redis 或 ticket 解析发生未预期错误 |
+| `50029` | `settlement operation failed` | 结算事务或未预期服务端错误 |
 
 连接成功后，服务端会写入 Redis 在线状态：
 
@@ -826,6 +933,14 @@ WebSocket 验证重点：
 29. 超时后通过 matchmaking.me 查询 timeout ticket，并确认可以创建新 ticket。
 30. 使用 Redis CLI 确认 canceled/timeout ticket 已离开任务队列和超时索引，Hash/玩家索引短期保留。
 31. 验证 40032、40033、40034、40035 和 40429 错误分支。
+32. 两名玩家建队并完成 `mission.create -> ready -> start -> finish`，记录 finished 任务实例 ID。
+33. 普通成员发送 `settlement.create`，确认返回 `40333 settlement leader required`。
+34. 队长发送结算请求并额外伪造 score/reward 字段，确认服务端返回 `recorded`、服务端计算分数和两条 `pending` 奖励。
+35. 确认另一名在线任务参与者收到 `settlement.created`，且 `request_id` 为空。
+36. 原样重放相同 nonce，确认返回 `40937`，MySQL 中任务记录仍为 1、奖励记录仍为 2。
+37. 验证缺少任务 ID、缺少 nonce、非法 nonce 和未 finished 任务分别返回 `40037`、`40038`、`40039`、`40936`。
+38. 查询 `mission_records` 和 `reward_records`，确认记录关联、状态、奖励玩家和数量正确。
+39. 使用主键和 nonce 精确清理本次测试记录，不执行无条件 DELETE、TRUNCATE 或 DROP TABLE。
 ```
 
 主要错误：
@@ -850,6 +965,7 @@ Day 26 已新增小队房间基础消息，支持创建小队、加入小队、�
 Day 27 已新增小队状态广播；加入、离开和 ready 状态变化会通知小队内其他在线成员。
 Day 28 已新增小队成员在线状态、断线重连、队长转移和任务会话状态机。
 Day 29 已新增 Redis matchmaking ticket、队列位置、取消、超时通知和残留清理。
+Day 30 已新增 finished 任务结算记录、pending 奖励记录、服务端分数计算、nonce 防重放和结算广播。
 online_players 表示当前 Go 进程内管理器记录的在线玩家连接数量。
 online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
 同一个玩家重复连接时，旧连接会被新连接替换；连接管理器通过 connection_id 避免旧连接断开时误注销新连接。
@@ -857,7 +973,7 @@ online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
 当前小队状态只保存在 Go 进程内存，服务重启后会清空。
 当前任务会话只保存在 Go 进程内存；它是业务生命周期元数据，不是战斗服进程。
 当前 matchmaking ticket 保存在 Redis，支持 queued/canceled/timeout；尚未实现 matched 和真正撮合成功。
-当前已支持小队、任务会话和匹配超时广播，但暂不做结算和排行榜消息。
+当前已支持小队、任务会话、匹配超时和结算广播；结算只记录 pending reward，尚未执行资产入账，排行榜消息也尚未实现。
 服务重启后，内存连接状态会清空。
 本地学习阶段使用 query 参数传 token；不要在日志里打印完整 token。
 ```

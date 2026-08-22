@@ -94,3 +94,43 @@ func TestManagerRejectsSecondActiveMissionForSquad(t *testing.T) {
 		t.Fatalf("second active mission should fail, got %v", err)
 	}
 }
+
+func TestManagerGeneratesUniqueIDsAcrossManagers(t *testing.T) {
+	firstManager := NewManager()
+	secondManager := NewManager()
+
+	first, err := firstManager.Create("training_ground", "squad_1", []int64{1})
+	if err != nil {
+		t.Fatalf("first create failed: %v", err)
+	}
+	second, err := secondManager.Create("training_ground", "squad_2", []int64{2})
+	if err != nil {
+		t.Fatalf("second create failed: %v", err)
+	}
+	if first.ID == second.ID {
+		t.Fatalf("mission ids must differ across managers: %s", first.ID)
+	}
+	if len(first.ID) > 64 || len(second.ID) > 64 {
+		t.Fatalf("mission id exceeds VARCHAR(64): %s %s", first.ID, second.ID)
+	}
+}
+
+func TestManagerGetByID(t *testing.T) {
+	manager := NewManager()
+	created, err := manager.Create("training_ground", "squad_1", []int64{1, 2})
+	if err != nil {
+		t.Fatalf("create mission failed: %v", err)
+	}
+
+	found, err := manager.GetByID(created.ID)
+	if err != nil {
+		t.Fatalf("get mission by id failed: %v", err)
+	}
+	if found.ID != created.ID || found.Status != StatusWaiting {
+		t.Fatalf("unexpected mission: %+v", found)
+	}
+
+	if _, err := manager.GetByID("missing"); !errors.Is(err, ErrMissionNotFound) {
+		t.Fatalf("missing mission should return ErrMissionNotFound, got %v", err)
+	}
+}
