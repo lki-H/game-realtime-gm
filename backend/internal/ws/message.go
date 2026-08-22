@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"game-realtime-gm/backend/internal/matchmaking"
 	"game-realtime-gm/backend/internal/mission"
 	"game-realtime-gm/backend/internal/squad"
 )
@@ -12,32 +13,39 @@ const (
 	MessageTypeServerWelcome = "server.welcome"
 	MessageTypeServerError   = "server.error"
 
-	MessageTypeDebugEcho           = "debug.echo"
-	MessageTypeDebugEchoResult     = "debug.echo.result"
-	MessageTypeSquadCreate         = "squad.create"
-	MessageTypeSquadCreateResult   = "squad.create.result"
-	MessageTypeSquadJoin           = "squad.join"
-	MessageTypeSquadJoinResult     = "squad.join.result"
-	MessageTypeSquadLeave          = "squad.leave"
-	MessageTypeSquadLeaveResult    = "squad.leave.result"
-	MessageTypeSquadReady          = "squad.ready"
-	MessageTypeSquadReadyResult    = "squad.ready.result"
-	MessageTypeSquadMe             = "squad.me"
-	MessageTypeSquadMeResult       = "squad.me.result"
-	MessageTypeSquadStateChanged   = "squad.state.changed"
-	MessageTypeMissionCreate       = "mission.create"
-	MessageTypeMissionCreateResult = "mission.create.result"
-	MessageTypeMissionReady        = "mission.ready"
-	MessageTypeMissionReadyResult  = "mission.ready.result"
-	MessageTypeMissionStart        = "mission.start"
-	MessageTypeMissionStartResult  = "mission.start.result"
-	MessageTypeMissionFinish       = "mission.finish"
-	MessageTypeMissionFinishResult = "mission.finish.result"
-	MessageTypeMissionCancel       = "mission.cancel"
-	MessageTypeMissionCancelResult = "mission.cancel.result"
-	MessageTypeMissionMe           = "mission.me"
-	MessageTypeMissionMeResult     = "mission.me.result"
-	MessageTypeMissionStateChanged = "mission.state.changed"
+	MessageTypeDebugEcho                = "debug.echo"
+	MessageTypeDebugEchoResult          = "debug.echo.result"
+	MessageTypeSquadCreate              = "squad.create"
+	MessageTypeSquadCreateResult        = "squad.create.result"
+	MessageTypeSquadJoin                = "squad.join"
+	MessageTypeSquadJoinResult          = "squad.join.result"
+	MessageTypeSquadLeave               = "squad.leave"
+	MessageTypeSquadLeaveResult         = "squad.leave.result"
+	MessageTypeSquadReady               = "squad.ready"
+	MessageTypeSquadReadyResult         = "squad.ready.result"
+	MessageTypeSquadMe                  = "squad.me"
+	MessageTypeSquadMeResult            = "squad.me.result"
+	MessageTypeSquadStateChanged        = "squad.state.changed"
+	MessageTypeMissionCreate            = "mission.create"
+	MessageTypeMissionCreateResult      = "mission.create.result"
+	MessageTypeMissionReady             = "mission.ready"
+	MessageTypeMissionReadyResult       = "mission.ready.result"
+	MessageTypeMissionStart             = "mission.start"
+	MessageTypeMissionStartResult       = "mission.start.result"
+	MessageTypeMissionFinish            = "mission.finish"
+	MessageTypeMissionFinishResult      = "mission.finish.result"
+	MessageTypeMissionCancel            = "mission.cancel"
+	MessageTypeMissionCancelResult      = "mission.cancel.result"
+	MessageTypeMissionMe                = "mission.me"
+	MessageTypeMissionMeResult          = "mission.me.result"
+	MessageTypeMissionStateChanged      = "mission.state.changed"
+	MessageTypeMatchmakingEnqueue       = "matchmaking.enqueue"
+	MessageTypeMatchmakingEnqueueResult = "matchmaking.enqueue.result"
+	MessageTypeMatchmakingCancel        = "matchmaking.cancel"
+	MessageTypeMatchmakingCancelResult  = "matchmaking.cancel.result"
+	MessageTypeMatchmakingMe            = "matchmaking.me"
+	MessageTypeMatchmakingMeResult      = "matchmaking.me.result"
+	MessageTypeMatchmakingStateChanged  = "matchmaking.state.changed"
 )
 
 const (
@@ -56,6 +64,12 @@ const (
 	MissionEventStarted  = "mission_started"
 	MissionEventFinished = "mission_finished"
 	MissionEventCanceled = "mission_canceled"
+)
+
+const (
+	MatchmakingEventQueued   = "match_queued"
+	MatchmakingEventCanceled = "match_canceled"
+	MatchmakingEventTimeout  = "match_timeout"
 )
 
 type ClientMessage struct {
@@ -123,6 +137,20 @@ type MissionStateChangedData struct {
 	Event         string            `json:"event"`
 	ActorPlayerID int64             `json:"actor_player_id,omitempty"`
 	Mission       *mission.Instance `json:"mission,omitempty"`
+}
+
+type MatchmakingEnqueueRequest struct {
+	MissionID string `json:"mission_id"`
+	Role      string `json:"role"`
+}
+
+type MatchmakingData struct {
+	Ticket *matchmaking.Ticket `json:"ticket,omitempty"`
+}
+
+type MatchmakingStateChangedData struct {
+	Event  string              `json:"event"`
+	Ticket *matchmaking.Ticket `json:"ticket,omitempty"`
 }
 
 func NewServerMessage(messageType string, requestID string, data any) ServerMessage {

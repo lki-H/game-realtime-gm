@@ -2,7 +2,7 @@
 
 这是一个持续迭代的 Go 后端学习项目，用于实现游戏业务中的玩家服务、管理员运营能力、在线状态和实时小队连接。
 
-当前代码已完成 Day 28：在 Day27 小队广播基础上，新增任务会话状态机、小队成员断线/重连状态和队长转移。
+当前代码已完成 Day 29：在小队与任务会话基础上，新增 Redis matchmaking ticket、队列位置、取消、超时通知和残留清理。
 
 ## 当前边界
 
@@ -57,6 +57,12 @@
 - `waiting -> ready -> running -> finished` 与 `waiting -> canceled` 合法状态跳转
 - `mission.state.changed` 任务会话主动广播
 - mission、squad 和 WebSocket 连接替换单元测试
+- Redis Hash 保存 ticket，任务 ZSet 保存队列顺序，全局 ZSet 保存超时索引
+- `matchmaking.enqueue`、`matchmaking.me` 和 `matchmaking.cancel`
+- `queued -> canceled/timeout` 合法状态变化
+- 30 秒本地演示超时和 `matchmaking.state.changed` 通知
+- canceled/timeout 从两个 ZSet 移除，终态 ticket 短期保留
+- 当前明确未实现 `matched` 和真正撮合算法
 
 ## 数据职责
 
@@ -88,6 +94,7 @@ game-realtime-gm/
 │       ├── config/          环境变量配置
 │       ├── database/        MySQL 连接、schema 和 seed
 │       ├── handler/         HTTP 与 WebSocket handler
+│       ├── matchmaking/     Redis 匹配票据、取消和超时
 │       ├── middleware/      玩家和管理员鉴权
 │       ├── model/           数据模型
 │       ├── mission/         任务会话业务状态机

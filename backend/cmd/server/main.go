@@ -29,7 +29,7 @@ func main() {
 	defer redisClient.Close()
 	log.Println("redis connected")
 
-	r := router.New(db, redisClient, cfg)
+	r := router.New(ctx, db, redisClient, cfg)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.AppPort,

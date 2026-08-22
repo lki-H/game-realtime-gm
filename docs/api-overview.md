@@ -334,10 +334,16 @@ Day 24 起，客户端发送 WebSocket 业务消息时，需要使用统一 JSON
 | `mission.cancel` | 队长执行 `waiting -> canceled` |
 | `mission.me` | 查询当前玩家最近的任务会话 |
 | `mission.state.changed` | 服务端向其他任务参与者推送完整任务会话快照 |
+| `matchmaking.enqueue` | 创建单玩家 queued ticket，需要 `mission_id` 和 `role` |
+| `matchmaking.cancel` | 取消当前 queued ticket |
+| `matchmaking.me` | 查询当前或最近 ticket |
+| `matchmaking.state.changed` | 票据超时时主动通知在线玩家 |
 
 Day 27 起，服务端会在小队成员加入、离开、ready 状态变化时，向小队内其他在线成员推送 `squad.state.changed`。小队状态当前保存在 Go 进程内存中，服务重启后会清空。
 
 Day 28 起，服务端支持小队成员断线/重连、队长转移和任务会话状态机。任务会话同样保存在 Go 进程内存中，服务重启后会清空。
+
+Day 29 起，服务端使用 Redis 保存 matchmaking ticket、任务等待队列、超时索引和玩家索引，支持查询、取消和超时通知。
 
 创建小队请求：
 
@@ -605,6 +611,110 @@ waiting -> canceled
 - 任务、小队和成员在线状态都只保存在当前 Go 进程内存中。
 - 任务创建后保存参与玩家 ID 快照，Day28 暂不处理任务中途成员增减锁定。
 
+### Day29 Redis Matchmaking Ticket
+
+当前 ticket 状态：
+
+~~~text
+queued -> canceled
+queued -> timeout
+~~~
+
+入队请求：
+
+~~~json
+{
+  "type": "matchmaking.enqueue",
+  "request_id": "enqueue-001",
+  "data": {
+    "mission_id": "training_ground",
+    "role": "damage"
+  }
+}
+~~~
+
+入队结果：
+
+~~~json
+{
+  "type": "matchmaking.enqueue.result",
+  "request_id": "enqueue-001",
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "ticket": {
+      "id": "ticket_9_1787384926200835700_bb603bcc3ab2efa1",
+      "mission_id": "training_ground",
+      "player_id": 9,
+      "role": "damage",
+      "status": "queued",
+      "queue_position": 1,
+      "created_at": "2026-08-22T15:48:46+08:00",
+      "updated_at": "2026-08-22T15:48:46+08:00",
+      "timeout_at": "2026-08-22T15:49:16+08:00"
+    }
+  },
+  "server_time": "2026-08-22T15:48:46+08:00"
+}
+~~~
+
+取消请求：
+
+~~~json
+{
+  "type": "matchmaking.cancel",
+  "request_id": "cancel-001",
+  "data": {}
+}
+~~~
+
+查询请求：
+
+~~~json
+{
+  "type": "matchmaking.me",
+  "request_id": "matchmaking-me-001",
+  "data": {}
+}
+~~~
+
+在线玩家的 ticket 超时时会收到：
+
+~~~json
+{
+  "type": "matchmaking.state.changed",
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "event": "match_timeout",
+    "ticket": {
+      "id": "ticket_9_1787384926200835700_bb603bcc3ab2efa1",
+      "mission_id": "training_ground",
+      "player_id": 9,
+      "role": "damage",
+      "status": "timeout",
+      "created_at": "2026-08-22T15:48:46+08:00",
+      "updated_at": "2026-08-22T15:49:16+08:00",
+      "timeout_at": "2026-08-22T15:49:16+08:00"
+    }
+  },
+  "server_time": "2026-08-22T15:49:16+08:00"
+}
+~~~
+
+Redis key：
+
+| Key | 类型 | 说明 |
+| --- | --- | --- |
+| `matchmaking:queue:<mission_id>` | ZSet | 按 created_at 排列 queued ticket |
+| `matchmaking:timeouts` | ZSet | 按 timeout_at 扫描超时 ticket |
+| `matchmaking:ticket:<ticket_id>` | Hash | ticket 详情 |
+| `matchmaking:player:<player_id>` | String | 玩家当前或最近 ticket ID |
+
+取消或超时后，ticket 会从两个 ZSet 移除；Hash 和玩家索引保留约 10 分钟供 `matchmaking.me` 查询。当前 30 秒超时仅用于本地演示。
+
+当前没有实现 `matched`、凑人算法、小队整体原子入队或匹配成功后自动创建任务会话。
+
 当前 WebSocket 业务消息错误：
 
 | code | message | 场景 |
@@ -617,10 +727,15 @@ waiting -> canceled
 | `40029` | `invalid squad ready data` | `squad.ready` 的 `data` 不是合法 JSON |
 | `40030` | `invalid mission create data` | `mission.create.data` 不是合法 JSON |
 | `40031` | `mission_id required` | 缺少任务模板 ID |
+| `40032` | `invalid matchmaking enqueue data` | `matchmaking.enqueue.data` 不是合法 JSON |
+| `40033` | `matchmaking mission_id required` | 匹配 mission_id 为空 |
+| `40034` | `matchmaking role required` | 匹配 role 为空 |
+| `40035` | `invalid matchmaking value` | mission_id/role 含非法字符或过长 |
 | `40332` | `squad leader required` | 普通成员尝试创建或改变任务状态 |
 | `40426` | `player not in squad` | 玩家不在小队中，却执行离开、准备或查询当前小队 |
 | `40427` | `squad not found` | 指定小队不存在 |
 | `40428` | `mission instance not found` | 玩家没有任务会话 |
+| `40429` | `matchmaking ticket not found` | 玩家没有可查询 ticket |
 | `40424` | `unsupported websocket message type` | `type` 暂未支持 |
 | `40926` | `player already in squad` | 玩家已经在小队中，又尝试创建或加入小队 |
 | `40927` | `squad is full` | 小队人数已满 |
@@ -629,10 +744,14 @@ waiting -> canceled
 | `40930` | `squad already has active mission` | 同一小队重复创建未结束任务 |
 | `40931` | `invalid mission state transition` | 任务状态跳转不合法 |
 | `40932` | `mission squad changed` | 当前小队与任务创建时小队不一致 |
+| `40933` | `player already queued` | 玩家重复入队 |
+| `40934` | `matchmaking ticket not queued` | 已取消/超时 ticket 再次取消 |
+| `40935` | `matchmaking ticket expired` | 取消时 ticket 已过期 |
 | `50024` | `update online status failed` | 连接建立后更新 Redis 在线状态失败 |
 | `50025` | `generate websocket connection id failed` | 服务端生成 WebSocket 连接 ID 失败 |
 | `50026` | `squad operation failed` | 小队操作发生未预期的服务端错误 |
 | `50027` | `mission operation failed` | 任务操作发生未预期的服务端错误 |
+| `50028` | `matchmaking operation failed` | Redis 或 ticket 解析发生未预期错误 |
 
 连接成功后，服务端会写入 Redis 在线状态：
 
@@ -700,6 +819,13 @@ WebSocket 验证重点：
 22. 让成员 ready=false 或断线，确认 mission.ready/start 分别返回 40929 或 40928。
 23. 关闭普通成员连接后确认 online=false、ready=false；重连后 online=true、ready 仍为 false。
 24. 关闭队长连接后确认广播 leader_changed，原队长重连后不会自动抢回队长。
+25. 玩家 1、玩家 2 依次发送 matchmaking.enqueue，确认 queue_position 分别为 1、2。
+26. 验证重复入队返回 40933，matchmaking.me 返回 queued ticket 和当前位置。
+27. 玩家 2 取消 ticket，确认 status=canceled，重复取消返回 40934。
+28. 保持玩家 1 在线等待约 30 秒，确认收到 matchmaking.state.changed，event=match_timeout。
+29. 超时后通过 matchmaking.me 查询 timeout ticket，并确认可以创建新 ticket。
+30. 使用 Redis CLI 确认 canceled/timeout ticket 已离开任务队列和超时索引，Hash/玩家索引短期保留。
+31. 验证 40032、40033、40034、40035 和 40429 错误分支。
 ```
 
 主要错误：
@@ -723,13 +849,15 @@ Day 25 已为每次 WebSocket 连接生成 connection_id，并将 Redis 在线�
 Day 26 已新增小队房间基础消息，支持创建小队、加入小队、离开小队、设置准备状态和查询当前小队。
 Day 27 已新增小队状态广播；加入、离开和 ready 状态变化会通知小队内其他在线成员。
 Day 28 已新增小队成员在线状态、断线重连、队长转移和任务会话状态机。
+Day 29 已新增 Redis matchmaking ticket、队列位置、取消、超时通知和残留清理。
 online_players 表示当前 Go 进程内管理器记录的在线玩家连接数量。
 online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
 同一个玩家重复连接时，旧连接会被新连接替换；连接管理器通过 connection_id 避免旧连接断开时误注销新连接。
 当前不主动删除 Redis 在线 key，原因是避免旧连接断开时误删新连接刚写入的在线状态。
 当前小队状态只保存在 Go 进程内存，服务重启后会清空。
 当前任务会话只保存在 Go 进程内存；它是业务生命周期元数据，不是战斗服进程。
-当前已支持小队和任务会话广播，但暂不做 PVE 匹配、结算和排行榜消息。
+当前 matchmaking ticket 保存在 Redis，支持 queued/canceled/timeout；尚未实现 matched 和真正撮合成功。
+当前已支持小队、任务会话和匹配超时广播，但暂不做结算和排行榜消息。
 服务重启后，内存连接状态会清空。
 本地学习阶段使用 query 参数传 token；不要在日志里打印完整 token。
 ```

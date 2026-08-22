@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tokenauth "game-realtime-gm/backend/internal/auth"
+	gamematchmaking "game-realtime-gm/backend/internal/matchmaking"
 	gamemission "game-realtime-gm/backend/internal/mission"
 	gamesquad "game-realtime-gm/backend/internal/squad"
 	realtimews "game-realtime-gm/backend/internal/ws"
@@ -34,7 +35,14 @@ var wsUpgrader = websocket.Upgrader{
 	},
 }
 
-func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient *redis.Client, squadManager *gamesquad.Manager, missionManager *gamemission.Manager) gin.HandlerFunc {
+func WebSocketEcho(
+	jwtSecret string,
+	wsManager *realtimews.Manager,
+	redisClient *redis.Client,
+	squadManager *gamesquad.Manager,
+	missionManager *gamemission.Manager,
+	matchmakingManager *gamematchmaking.Manager,
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, ok := websocketPlayerClaims(c, jwtSecret)
 		if !ok {
@@ -505,6 +513,87 @@ func WebSocketEcho(jwtSecret string, wsManager *realtimews.Manager, redisClient 
 					return
 				}
 
+			case realtimews.MessageTypeMatchmakingEnqueue:
+				var request realtimews.MatchmakingEnqueueRequest
+				if err := json.Unmarshal(clientMessage.Data, &request); err != nil {
+					errMsg := realtimews.NewErrorMessage(clientMessage.RequestID, 40032, "invalid matchmaking enqueue data")
+					if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
+						log.Printf("websocket write matchmaking enqueue invalid data failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				squadID := ""
+				if squadState, err := squadManager.GetByPlayer(claims.PlayerID); err == nil {
+					squadID = squadState.ID
+				}
+
+				ticket, err := matchmakingManager.Enqueue(
+					c.Request.Context(),
+					request.MissionID,
+					claims.PlayerID,
+					squadID,
+					request.Role,
+				)
+				if err != nil {
+					if err := writeWebSocketJSON(conn, writeMu, matchmakingErrorMessage(clientMessage.RequestID, err)); err != nil {
+						log.Printf("websocket write matchmaking enqueue error failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				response := realtimews.NewServerMessage(
+					realtimews.MessageTypeMatchmakingEnqueueResult,
+					clientMessage.RequestID,
+					realtimews.MatchmakingData{Ticket: ticket},
+				)
+				if err := writeWebSocketJSON(conn, writeMu, response); err != nil {
+					log.Printf("websocket write matchmaking enqueue response failed: %v", err)
+					return
+				}
+
+			case realtimews.MessageTypeMatchmakingCancel:
+				ticket, err := matchmakingManager.Cancel(c.Request.Context(), claims.PlayerID)
+				if err != nil {
+					if err := writeWebSocketJSON(conn, writeMu, matchmakingErrorMessage(clientMessage.RequestID, err)); err != nil {
+						log.Printf("websocket write matchmaking cancel error failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				response := realtimews.NewServerMessage(
+					realtimews.MessageTypeMatchmakingCancelResult,
+					clientMessage.RequestID,
+					realtimews.MatchmakingData{Ticket: ticket},
+				)
+				if err := writeWebSocketJSON(conn, writeMu, response); err != nil {
+					log.Printf("websocket write matchmaking cancel response failed: %v", err)
+					return
+				}
+
+			case realtimews.MessageTypeMatchmakingMe:
+				ticket, err := matchmakingManager.GetByPlayer(c.Request.Context(), claims.PlayerID)
+				if err != nil {
+					if err := writeWebSocketJSON(conn, writeMu, matchmakingErrorMessage(clientMessage.RequestID, err)); err != nil {
+						log.Printf("websocket write matchmaking me error failed: %v", err)
+						return
+					}
+					continue
+				}
+
+				response := realtimews.NewServerMessage(
+					realtimews.MessageTypeMatchmakingMeResult,
+					clientMessage.RequestID,
+					realtimews.MatchmakingData{Ticket: ticket},
+				)
+				if err := writeWebSocketJSON(conn, writeMu, response); err != nil {
+					log.Printf("websocket write matchmaking me response failed: %v", err)
+					return
+				}
+
 			default:
 				errMsg := realtimews.NewErrorMessage(clientMessage.RequestID, 40424, "unsupported websocket message type")
 				if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {
@@ -679,6 +768,27 @@ func missionErrorMessage(requestID string, err error) realtimews.ServerMessage {
 		return realtimews.NewErrorMessage(requestID, 40931, "invalid mission state transition")
 	default:
 		return realtimews.NewErrorMessage(requestID, 50027, "mission operation failed")
+	}
+}
+
+func matchmakingErrorMessage(requestID string, err error) realtimews.ServerMessage {
+	switch err {
+	case gamematchmaking.ErrMissionIDRequired:
+		return realtimews.NewErrorMessage(requestID, 40033, "matchmaking mission_id required")
+	case gamematchmaking.ErrRoleRequired:
+		return realtimews.NewErrorMessage(requestID, 40034, "matchmaking role required")
+	case gamematchmaking.ErrInvalidMissionID, gamematchmaking.ErrInvalidRole:
+		return realtimews.NewErrorMessage(requestID, 40035, "invalid matchmaking value")
+	case gamematchmaking.ErrTicketNotFound:
+		return realtimews.NewErrorMessage(requestID, 40429, "matchmaking ticket not found")
+	case gamematchmaking.ErrAlreadyQueued:
+		return realtimews.NewErrorMessage(requestID, 40933, "player already queued")
+	case gamematchmaking.ErrTicketNotQueued:
+		return realtimews.NewErrorMessage(requestID, 40934, "matchmaking ticket not queued")
+	case gamematchmaking.ErrTicketExpired:
+		return realtimews.NewErrorMessage(requestID, 40935, "matchmaking ticket expired")
+	default:
+		return realtimews.NewErrorMessage(requestID, 50028, "matchmaking operation failed")
 	}
 }
 

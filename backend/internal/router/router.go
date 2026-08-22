@@ -1,11 +1,17 @@
 package router
 
 import (
+	"context"
+	"errors"
+	"log"
+	"time"
+
 	"database/sql"
 	"net/http"
 
 	"game-realtime-gm/backend/internal/config"
 	"game-realtime-gm/backend/internal/handler"
+	"game-realtime-gm/backend/internal/matchmaking"
 	"game-realtime-gm/backend/internal/middleware"
 	"game-realtime-gm/backend/internal/mission"
 	"game-realtime-gm/backend/internal/squad"
@@ -15,7 +21,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func New(db *sql.DB, redisClient *redis.Client, cfg config.Config) http.Handler {
+func New(ctx context.Context, db *sql.DB, redisClient *redis.Client, cfg config.Config) http.Handler {
 	r := gin.Default()
 
 	authHandler := handler.NewAuthHandler(db, cfg.JWTSecret)
@@ -26,9 +32,39 @@ func New(db *sql.DB, redisClient *redis.Client, cfg config.Config) http.Handler 
 	wsManager := ws.NewManager()
 	squadManager := squad.NewManager()
 	missionManager := mission.NewManager()
+	matchmakingManager := matchmaking.NewManager(redisClient)
 
 	r.GET("/health", handler.Health)
-	r.GET("/ws", handler.WebSocketEcho(cfg.JWTSecret, wsManager, redisClient, squadManager, missionManager))
+	r.GET("/ws", handler.WebSocketEcho(
+		cfg.JWTSecret,
+		wsManager,
+		redisClient,
+		squadManager,
+		missionManager,
+		matchmakingManager,
+	))
+
+	go matchmakingManager.RunTimeoutLoop(
+		ctx,
+		time.Second,
+		func(ticket *matchmaking.Ticket) {
+			message := ws.NewServerMessage(
+				ws.MessageTypeMatchmakingStateChanged,
+				"",
+				ws.MatchmakingStateChangedData{
+					Event:  ws.MatchmakingEventTimeout,
+					Ticket: ticket,
+				},
+			)
+
+			if err := wsManager.SendToPlayer(ticket.PlayerID, message); err != nil && !errors.Is(err, ws.ErrClientNotConnected) {
+				log.Printf("websocket notify matchmaking timeout failed: player_id=%d ticket_id=%s err=%v", ticket.PlayerID, ticket.ID, err)
+			}
+		},
+		func(err error) {
+			log.Printf("matchmaking timeout cleanup failed: %v", err)
+		},
+	)
 
 	api := r.Group("/api")
 	api.POST("/register", authHandler.Register)
