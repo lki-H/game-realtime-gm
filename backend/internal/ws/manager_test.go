@@ -22,3 +22,15 @@ func TestUnregisterOnlyRemovesCurrentConnection(t *testing.T) {
 		t.Fatalf("expected no connections, got %d", manager.Count())
 	}
 }
+
+func TestIsConnected(t *testing.T) {
+	manager := NewManager()
+	manager.Register(&Client{ConnectionID: "current", PlayerID: 7})
+
+	if !manager.IsConnected(7) {
+		t.Fatal("registered player should be connected")
+	}
+	if manager.IsConnected(8) {
+		t.Fatal("unknown player should not be connected")
+	}
+}

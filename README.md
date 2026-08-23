@@ -2,7 +2,7 @@
 
 这是一个持续迭代的 Go 后端学习项目，用于实现游戏业务中的玩家服务、管理员运营能力、在线状态和实时小队连接。
 
-当前代码已完成 Day 32：在幂等资产结算基础上，新增 Redis 个人最佳分排行榜、同分先达到者优先、我的排名和 MySQL 战绩分页。
+当前代码已完成 Day 33：在 Day32 排行榜与战绩查询基础上，新增 GM 单实例实时摘要、玩家聚合观察、结算筛选、管理员排行榜和 HTTP Request ID。
 
 ## 当前边界
 
@@ -10,7 +10,8 @@
 - 小队状态保存在 Go 进程内存中，服务重启后会清空。
 - WebSocket 当前负责玩家连接、在线状态、小队、任务会话、匹配票据和结算记录消息。
 - MySQL 使用三层唯一约束保护结算幂等，并在同一事务中提交任务结果、granted reward、玩家余额和资产流水。
-- 当前尚未提供玩家资产查询、GM 流水查询、排行榜主动广播或服务重启后的任务恢复。
+- GM 实时摘要是当前单体进程、Redis 与 MySQL 依次读取形成的近实时视图，不是多实例全服原子快照。
+- 当前尚未提供危险 GM 实时命令、完整资产流水查询、排行榜主动广播或服务重启后的任务恢复。
 - 当前不包含逐帧战斗模拟、物理或技能判定、怪物 AI、客户端预测及商业级网络同步。
 
 ## 技术栈
@@ -44,6 +45,11 @@
 - 玩家列表、详情、封禁和解封
 - GM 操作日志记录、分页、筛选和详情
 - 封禁状态修改与操作日志使用同一数据库事务
+- 当前实例的连接、小队、匹配、任务和 settled 结算摘要
+- 玩家在线、小队、任务、匹配、余额和最近结算聚合观察
+- settled 结算分页筛选和管理员排行榜查询
+- 所有 HTTP 响应返回经校验的 `X-Request-ID`；GM 观察标准日志关联管理员身份
+- 只读观察不写入 `admin_operation_logs`，危险写操作继续保留数据库审计
 
 ### 在线与实时连接
 
@@ -119,6 +125,7 @@ game-realtime-gm/
 │       ├── middleware/      玩家和管理员鉴权
 │       ├── model/           数据模型
 │       ├── mission/         任务会话业务状态机
+│       ├── observation/     GM 单实例摘要、玩家上下文和结算查询
 │       ├── settlement/      幂等结算、资产强事务和已有结果查询
 │       ├── router/          路由注册
 │       ├── squad/           小队内存状态
@@ -235,6 +242,10 @@ POST /api/admin/players/:id/ban
 POST /api/admin/players/:id/unban
 GET  /api/admin/operation-logs
 GET  /api/admin/operation-logs/:id
+GET  /api/admin/realtime/summary
+GET  /api/admin/realtime/players/:id
+GET  /api/admin/settlements
+GET  /api/admin/leaderboards/:mission_id
 GET  /ws
 ```
 

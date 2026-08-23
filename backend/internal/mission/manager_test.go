@@ -134,3 +134,25 @@ func TestManagerGetByID(t *testing.T) {
 		t.Fatalf("missing mission should return ErrMissionNotFound, got %v", err)
 	}
 }
+
+func TestStats(t *testing.T) {
+	manager := NewManager()
+	first, err := manager.Create("training_ground", "squad_1", []int64{1})
+	if err != nil {
+		t.Fatalf("create first mission failed: %v", err)
+	}
+	if _, err := manager.Transition(first.ID, StatusReady); err != nil {
+		t.Fatalf("ready first mission failed: %v", err)
+	}
+	if _, err := manager.Transition(first.ID, StatusRunning); err != nil {
+		t.Fatalf("start first mission failed: %v", err)
+	}
+	if _, err := manager.Create("training_ground", "squad_2", []int64{2}); err != nil {
+		t.Fatalf("create second mission failed: %v", err)
+	}
+
+	stats := manager.Stats()
+	if stats.Total != 2 || stats.Running != 1 || stats.Waiting != 1 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}

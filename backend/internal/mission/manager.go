@@ -42,6 +42,15 @@ type Instance struct {
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
+type Stats struct {
+	Total    int `json:"total"`
+	Waiting  int `json:"waiting"`
+	Ready    int `json:"ready"`
+	Running  int `json:"running"`
+	Finished int `json:"finished"`
+	Canceled int `json:"canceled"`
+}
+
 type Manager struct {
 	mu            sync.RWMutex
 	instances     map[string]*Instance
@@ -170,6 +179,28 @@ func (m *Manager) GetByID(instanceID string) (*Instance, error) {
 		return nil, ErrMissionNotFound
 	}
 	return cloneInstance(instance), nil
+}
+
+func (m *Manager) Stats() Stats {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	stats := Stats{Total: len(m.instances)}
+	for _, instance := range m.instances {
+		switch instance.Status {
+		case StatusWaiting:
+			stats.Waiting++
+		case StatusReady:
+			stats.Ready++
+		case StatusRunning:
+			stats.Running++
+		case StatusFinished:
+			stats.Finished++
+		case StatusCanceled:
+			stats.Canceled++
+		}
+	}
+	return stats
 }
 
 func newInstanceID(now time.Time) (string, error) {

@@ -90,6 +90,28 @@ func TestReconnectDoesNotReclaimLeader(t *testing.T) {
 	}
 }
 
+func TestStats(t *testing.T) {
+	manager := NewManager()
+	first, err := manager.Create(1, "player01")
+	if err != nil {
+		t.Fatalf("create first squad failed: %v", err)
+	}
+	if _, err := manager.Join(first.ID, 2, "player02"); err != nil {
+		t.Fatalf("join first squad failed: %v", err)
+	}
+	if _, err := manager.Create(3, "player03"); err != nil {
+		t.Fatalf("create second squad failed: %v", err)
+	}
+	if _, _, _, err := manager.HandleDisconnect(2); err != nil {
+		t.Fatalf("disconnect member failed: %v", err)
+	}
+
+	stats := manager.Stats()
+	if stats.Squads != 2 || stats.Members != 3 || stats.OnlineMembers != 2 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}
+
 func findMember(t *testing.T, state *Squad, playerID int64) Member {
 	t.Helper()
 	for _, member := range state.Members {

@@ -103,6 +103,14 @@ func (m *Manager) Count() int {
 	return len(m.clients)
 }
 
+func (m *Manager) IsConnected(playerID int64) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	_, exists := m.clients[playerID]
+	return exists
+}
+
 func (m *Manager) PlayerIDs() []int64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

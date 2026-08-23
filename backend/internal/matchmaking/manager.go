@@ -179,6 +179,19 @@ func (m *Manager) GetByPlayer(ctx context.Context, playerID int64) (*Ticket, err
 	return cloneTicket(ticket), nil
 }
 
+func (m *Manager) CountQueued(ctx context.Context) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	minimumTimeout := "(" + strconv.FormatInt(time.Now().UnixMilli(), 10)
+	return m.redisClient.ZCount(
+		ctx,
+		timeoutIndexKey,
+		minimumTimeout,
+		"+inf",
+	).Result()
+}
+
 func (m *Manager) CleanupExpired(ctx context.Context) ([]*Ticket, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

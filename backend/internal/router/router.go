@@ -15,6 +15,7 @@ import (
 	"game-realtime-gm/backend/internal/matchmaking"
 	"game-realtime-gm/backend/internal/middleware"
 	"game-realtime-gm/backend/internal/mission"
+	"game-realtime-gm/backend/internal/observation"
 	"game-realtime-gm/backend/internal/settlement"
 	"game-realtime-gm/backend/internal/squad"
 	"game-realtime-gm/backend/internal/ws"
@@ -25,6 +26,7 @@ import (
 
 func New(ctx context.Context, db *sql.DB, redisClient *redis.Client, cfg config.Config) http.Handler {
 	r := gin.Default()
+	r.Use(middleware.RequestID())
 
 	authHandler := handler.NewAuthHandler(db, cfg.JWTSecret)
 	adminAuthHandler := handler.NewAdminAuthHandler(db, cfg.JWTSecret)
@@ -38,6 +40,17 @@ func New(ctx context.Context, db *sql.DB, redisClient *redis.Client, cfg config.
 	settlementService := settlement.NewService(db, missionManager)
 	leaderboardService := leaderboard.NewService(db, redisClient)
 	leaderboardHandler := handler.NewLeaderboardHandler(leaderboardService)
+	observationService := observation.NewService(
+		db,
+		wsManager,
+		squadManager,
+		missionManager,
+		matchmakingManager,
+	)
+	observationHandler := handler.NewObservationHandler(
+		observationService,
+		leaderboardHandler,
+	)
 
 	r.GET("/health", handler.Health)
 	r.GET("/ws", handler.WebSocketEcho(
@@ -102,5 +115,9 @@ func New(ctx context.Context, db *sql.DB, redisClient *redis.Client, cfg config.
 	adminProtected.GET("/operation-log-actions", adminHandler.ListOperationLogActions)
 	adminProtected.GET("/operation-logs", adminHandler.ListOperationLogs)
 	adminProtected.GET("/operation-logs/:id", adminHandler.GetOperationLogByID)
+	adminProtected.GET("/realtime/summary", observationHandler.Summary)
+	adminProtected.GET("/realtime/players/:id", observationHandler.Player)
+	adminProtected.GET("/settlements", observationHandler.Settlements)
+	adminProtected.GET("/leaderboards/:mission_id", observationHandler.Leaderboard)
 	return r
 }

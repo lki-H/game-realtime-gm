@@ -29,6 +29,18 @@ http://localhost:8080
 }
 ```
 
+## HTTP Request ID
+
+Day33 起，所有 HTTP 响应都包含：
+
+```text
+X-Request-ID: req_<时间>_<随机值>
+```
+
+客户端可以主动发送合法的 `X-Request-ID`，服务端会原样回传。允许 1 到 64 位字母、数字、下划线、短横线和点；缺失、含空格或换行、过长时会由服务端替换。
+
+Request ID 只用于请求与日志关联，不用于 JWT 鉴权、结算幂等或完整分布式 Trace。Day33 的 GM 观察日志会记录 request ID、管理员 ID、管理员用户名和固定 action。
+
 ## 鉴权方式
 
 玩家接口使用玩家 token：
@@ -1075,6 +1087,15 @@ WebSocket 验证重点：
 50. 验证当前玩家战绩分页；非队长参与者也能通过 granted reward 关系查询自己的任务记录。
 51. 对照 Redis 每名玩家只有一条最佳分，而 MySQL 保存全部 settled 战绩。
 52. 精确清理临时玩家、mission/reward/ledger/asset、在线 key 和专用 leaderboard key。
+53. 玩家 token 访问 `/api/admin/realtime/summary` 返回 `40311`；缺少管理员 token 返回 401。
+54. 管理员发送合法 `X-Request-ID`，确认响应头原样回传；非法值被服务端替换。
+55. 建立 2 人小队、1 个 queued ticket 和 1 个 finished + settled 任务，确认实时摘要的连接、小队、匹配、任务和结算统计。
+56. 查询普通参与玩家实时上下文，确认在线、小队、finished mission、queued ticket、余额和最近结算正确。
+57. 确认玩家上下文不返回 token、密码、nonce、idempotency key 或 WebSocket 连接对象。
+58. 结算列表按 mission_id 和普通参与玩家筛选成功；非法 player_id 返回 `40093`。
+59. 管理员排行榜返回任务 Top N；四类观察日志包含 request ID 和管理员身份。
+60. 确认只读观察前后 `admin_operation_logs` 数量不变。
+61. 精确清理临时玩家、结算、资产、ticket/queue/timeout、排行榜和在线 key。
 ```
 
 主要错误：
@@ -1102,6 +1123,7 @@ Day 29 已新增 Redis matchmaking ticket、队列位置、取消、超时通知
 Day 30 已新增 finished 任务结算记录、pending 奖励记录、服务端分数计算、nonce 防重放和结算广播。
 Day 31 已新增任务级幂等、重复请求返回已有结果、player_assets、granted reward、asset_ledger 和核心资产强事务。
 Day 32 已新增 Redis 个人最佳分排行榜、Lua 原子更新、同分先达到者优先、我的排名和 MySQL 战绩分页。
+Day 33 已新增 GM 单实例实时摘要、玩家聚合上下文、结算筛选、管理员排行榜和 HTTP Request ID。
 online_players 表示当前 Go 进程内管理器记录的在线玩家连接数量。
 online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
 同一个玩家重复连接时，旧连接会被新连接替换；连接管理器通过 connection_id 避免旧连接断开时误注销新连接。
@@ -1109,7 +1131,7 @@ online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
 当前小队状态只保存在 Go 进程内存，服务重启后会清空。
 当前任务会话只保存在 Go 进程内存；它是业务生命周期元数据，不是战斗服进程。
 当前 matchmaking ticket 保存在 Redis，支持 queued/canceled/timeout；尚未实现 matched 和真正撮合成功。
-当前已支持小队、任务会话、匹配超时、幂等资产结算、排行榜和玩家战绩查询；玩家资产查询、GM 流水查询、排行榜主动广播和服务重启后的任务恢复尚未实现。
+当前已支持小队、任务会话、匹配超时、幂等资产结算、排行榜、玩家战绩和 GM 只读观察；危险 GM 实时命令、完整资产流水查询、排行榜主动广播、多实例聚合和服务重启后的任务恢复尚未实现。
 服务重启后，内存连接状态会清空。
 本地学习阶段使用 query 参数传 token；不要在日志里打印完整 token。
 ```
@@ -1312,6 +1334,96 @@ limit：返回最近多少条日志，默认 10，最大 20。
 50101 query recent operation logs failed
 50102 scan recent operation log failed
 50103 read recent operation log rows failed
+```
+
+### GET /api/admin/realtime/summary
+
+用途：观察当前单体 Go 实例的近实时运营摘要。
+
+返回：
+
+```text
+online_connections
+squads.squads / members / online_members
+matchmaking_queued
+missions.total / waiting / ready / running / finished / canceled
+settlements
+observed_at
+```
+
+连接、小队和任务来自当前进程内存；queued 匹配来自 Redis；settled 结算数来自 MySQL。各模块依次读取，没有跨组件总锁，因此这是带 `observed_at` 的近实时单实例视图，不是全服原子快照。
+
+### GET /api/admin/realtime/players/:id
+
+用途：聚合观察某个玩家的当前业务上下文。
+
+返回：
+
+```text
+账号状态与 soft_currency
+online
+squad
+mission
+matching 与最近 matchmaking ticket
+latest_settlement
+observed_at
+```
+
+只返回 `online` 布尔值，不暴露 WebSocket Conn、内部锁、token、密码、nonce 或 idempotency key。服务重启后内存小队/任务可能为空，但 MySQL 最近结算仍可查询。
+
+主要错误：
+
+```text
+40092 invalid observation player id
+40492 observation player not found
+50202 query player observation failed
+```
+
+### GET /api/admin/settlements
+
+用途：分页查询 settled 结算记录。
+
+查询参数：
+
+```text
+page=1
+page_size=20
+mission_id=day33_observe_ground
+player_id=2
+```
+
+`player_id` 按 granted reward 参与关系筛选，因此普通参与者也能命中结算。列表返回提交者、分数、耗时、奖励人数和时间，不返回 nonce、幂等 key 或 asset ledger 细节。
+
+主要错误：
+
+```text
+40093 invalid settlement player id
+50203 query settlements failed
+```
+
+### GET /api/admin/leaderboards/:mission_id
+
+用途：管理员查看 Day32 排行榜 Top N。
+
+查询参数 `limit` 默认 10、最大 50，复用 `40090/40490/50090` 排行榜错误码。
+
+### Day33 GM 观察日志边界
+
+四类只读 action：
+
+```text
+realtime.summary
+realtime.player
+settlements.list
+leaderboard.list
+```
+
+只读轮询不写高频 `admin_operation_logs`，而是写包含 `request_id`、`admin_id`、`admin_username` 和固定 action 的标准日志。封禁、解封等危险写操作继续使用 MySQL 操作审计。
+
+摘要失败使用：
+
+```text
+50201 query realtime summary failed
 ```
 
 ### GET /api/admin/players

@@ -33,6 +33,12 @@ type Squad struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+type Stats struct {
+	Squads        int `json:"squads"`
+	Members       int `json:"members"`
+	OnlineMembers int `json:"online_members"`
+}
+
 type Manager struct {
 	mu          sync.RWMutex
 	nextID      int64
@@ -182,6 +188,22 @@ func (m *Manager) SetReady(playerID int64, ready bool) (*Squad, error) {
 
 	delete(m.playerSquad, playerID)
 	return nil, ErrPlayerNotInSquad
+}
+
+func (m *Manager) Stats() Stats {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	stats := Stats{Squads: len(m.squads)}
+	for _, currentSquad := range m.squads {
+		stats.Members += len(currentSquad.Members)
+		for _, member := range currentSquad.Members {
+			if member.Online {
+				stats.OnlineMembers++
+			}
+		}
+	}
+	return stats
 }
 
 func (m *Manager) GetByPlayer(playerID int64) (*Squad, error) {
