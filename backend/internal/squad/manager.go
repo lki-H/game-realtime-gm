@@ -149,6 +149,9 @@ func (m *Manager) Leave(playerID int64) (*Squad, bool, error) {
 		return nil, true, nil
 	}
 
+	s.Members = nextMembers
+	s.UpdatedAt = time.Now()
+
 	if s.LeaderID == playerID {
 		newLeaderID := nextMembers[0].PlayerID
 		for _, member := range nextMembers {

@@ -1124,6 +1124,7 @@ Day 30 已新增 finished 任务结算记录、pending 奖励记录、服务端�
 Day 31 已新增任务级幂等、重复请求返回已有结果、player_assets、granted reward、asset_ledger 和核心资产强事务。
 Day 32 已新增 Redis 个人最佳分排行榜、Lua 原子更新、同分先达到者优先、我的排名和 MySQL 战绩分页。
 Day 33 已新增 GM 单实例实时摘要、玩家聚合上下文、结算筛选、管理员排行榜和 HTTP Request ID。
+Day 34 未新增业务接口或 WebSocket 消息；新增安全访问日志、ws_bot、本机 pprof 和性能基线。
 online_players 表示当前 Go 进程内管理器记录的在线玩家连接数量。
 online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
 同一个玩家重复连接时，旧连接会被新连接替换；连接管理器通过 connection_id 避免旧连接断开时误注销新连接。
@@ -1133,7 +1134,8 @@ online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
 当前 matchmaking ticket 保存在 Redis，支持 queued/canceled/timeout；尚未实现 matched 和真正撮合成功。
 当前已支持小队、任务会话、匹配超时、幂等资产结算、排行榜、玩家战绩和 GM 只读观察；危险 GM 实时命令、完整资产流水查询、排行榜主动广播、多实例聚合和服务重启后的任务恢复尚未实现。
 服务重启后，内存连接状态会清空。
-本地学习阶段使用 query 参数传 token；不要在日志里打印完整 token。
+本地学习阶段仍使用 query 参数传 WebSocket token。Day34 AccessLog 只记录 URL path，不记录 query，服务端也不再逐条记录原始 WebSocket payload；当前鉴权契约没有改变。
+pprof 仅在显式启用时通过独立本机端口提供，不注册到业务 Gin Router，也不属于本 API 契约。
 ```
 
 ## 在线状态模块

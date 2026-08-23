@@ -25,8 +25,10 @@ import (
 )
 
 func New(ctx context.Context, db *sql.DB, redisClient *redis.Client, cfg config.Config) http.Handler {
-	r := gin.Default()
+	r := gin.New()
 	r.Use(middleware.RequestID())
+	r.Use(middleware.AccessLog())
+	r.Use(gin.Recovery())
 
 	authHandler := handler.NewAuthHandler(db, cfg.JWTSecret)
 	adminAuthHandler := handler.NewAdminAuthHandler(db, cfg.JWTSecret)

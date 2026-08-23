@@ -159,8 +159,6 @@ func WebSocketEcho(
 				return
 			}
 
-			log.Printf("websocket received from player_id=%d: %s", claims.PlayerID, string(message))
-
 			if messageType != websocket.TextMessage {
 				errMsg := realtimews.NewErrorMessage("", 40026, "websocket only supports text json messages")
 				if err := writeWebSocketJSON(conn, writeMu, errMsg); err != nil {

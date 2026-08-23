@@ -2,7 +2,7 @@
 
 这是一个持续迭代的 Go 后端学习项目，用于实现游戏业务中的玩家服务、管理员运营能力、在线状态和实时小队连接。
 
-当前代码已完成 Day 33：在 Day32 排行榜与战绩查询基础上，新增 GM 单实例实时摘要、玩家聚合观察、结算筛选、管理员排行榜和 HTTP Request ID。
+当前代码已完成 Day 34：新增安全访问日志、WebSocket 多玩家流程工具、本机 pprof、Docker Linux race 检查和可复现性能基线。
 
 ## 当前边界
 
@@ -11,6 +11,8 @@
 - WebSocket 当前负责玩家连接、在线状态、小队、任务会话、匹配票据和结算记录消息。
 - MySQL 使用三层唯一约束保护结算幂等，并在同一事务中提交任务结果、granted reward、玩家余额和资产流水。
 - GM 实时摘要是当前单体进程、Redis 与 MySQL 依次读取形成的近实时视图，不是多实例全服原子快照。
+- Day34 的 8/20 客户端结果来自本机单实例回环网络，只作为工程基线，不代表生产容量。
+- pprof 默认关闭，显式启用时只监听独立本机端口，不进入业务 API。
 - 当前尚未提供危险 GM 实时命令、完整资产流水查询、排行榜主动广播或服务重启后的任务恢复。
 - 当前不包含逐帧战斗模拟、物理或技能判定、怪物 AI、客户端预测及商业级网络同步。
 
@@ -60,6 +62,9 @@
 - Redis 在线状态写入、续期和过期
 - 小队创建、加入、准备状态、查询和离开
 - 小队成员加入、离开和 ready 变化时，向其他在线成员推送 `squad.state.changed`
+- 离队会真正移除成员，最后一名成员离开时解散小队，并有回归测试保护
+- AccessLog 只记录 URL path，不记录 WebSocket query token
+- 服务端不再逐条记录高频原始 WebSocket payload
 - 断线成员保留在小队并设置 `online=false`、`ready=false`
 - 队长断线或离队后转移给最早加入的在线成员
 - 任务会话创建、ready、开始、结束、取消和查询
@@ -82,6 +87,14 @@
 - 结算成功后 best-effort 同步 Redis 排行榜，幂等重试可修复投影
 - 每个任务模板只保留每名玩家个人最佳分，同分时先达到者优先
 - HTTP 查询排行榜 Top N、当前玩家排名和 MySQL settled 战绩分页
+
+### 工程验证
+
+- `cmd/tools/ws_bot` 自动执行注册/登录、并发建连、小队 create/join/ready、`debug.echo`、hold 和 leave
+- 按阶段输出 success、failure、Average、P95、Maximum、错误类别和消息类型
+- 8 客户端冒烟和 20 客户端、10000 echo 本机基线均为 0 失败
+- CPU、heap 和 goroutine 使用独立本机 pprof 采样
+- 官方 Go Linux Docker 镜像中的 `go test -race ./...` 全部通过
 
 ## 数据职责
 
@@ -119,6 +132,7 @@ game-realtime-gm/
 │       ├── cache/           Redis 连接
 │       ├── config/          环境变量配置
 │       ├── database/        MySQL 连接、schema、seed 和 migration
+│       ├── diagnostics/     默认关闭的本机 pprof 诊断服务
 │       ├── handler/         HTTP 与 WebSocket handler
 │       ├── leaderboard/     Redis 最佳分排行、同分排序和 MySQL 战绩查询
 │       ├── matchmaking/     Redis 匹配票据、取消和超时
@@ -210,6 +224,8 @@ GET http://localhost:8080/health
 
 ```text
 APP_PORT=8080
+PPROF_ENABLED=false
+PPROF_ADDR=127.0.0.1:6060
 DB_HOST=localhost
 DB_PORT=3306
 DB_USER=game
@@ -262,8 +278,16 @@ cd ..\deploy
 docker compose config
 ```
 
+当前 Windows 环境没有 GCC。Day34 使用官方 Go Linux 镜像完成 race：
+
+```powershell
+cd .\backend
+docker run --rm -v "${PWD}:/workspace" -w /workspace golang:1.25-bookworm go test -race ./...
+```
+
 ## 项目文档
 
 - `docs/api-overview.md`：当前 HTTP API、WebSocket 消息、错误码和验证步骤。
+- `docs/performance/day34-baseline.md`：Day34 冒烟、负载、pprof、race 和数据清理实测记录。
 - `docs/adr/0006-使用MySQL作为主数据库.md`：主数据库迁移到 MySQL 的架构决策。
 - `docs/github-workflow.md`：公开仓库的安全提交与推送流程。

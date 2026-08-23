@@ -1,6 +1,9 @@
 package squad
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestHandleDisconnectClearsReady(t *testing.T) {
 	manager := NewManager()
@@ -109,6 +112,42 @@ func TestStats(t *testing.T) {
 	stats := manager.Stats()
 	if stats.Squads != 2 || stats.Members != 3 || stats.OnlineMembers != 2 {
 		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}
+
+func TestLeaveRemovesMembersAndDisbandsSquad(t *testing.T) {
+	manager := NewManager()
+	created, err := manager.Create(1, "player01")
+	if err != nil {
+		t.Fatalf("create squad failed: %v", err)
+	}
+	if _, err := manager.Join(created.ID, 2, "player02"); err != nil {
+		t.Fatalf("join squad failed: %v", err)
+	}
+
+	state, disbanded, err := manager.Leave(2)
+	if err != nil {
+		t.Fatalf("member leave failed: %v", err)
+	}
+	if disbanded {
+		t.Fatal("squad should remain while leader is present")
+	}
+	if len(state.Members) != 1 || state.Members[0].PlayerID != 1 {
+		t.Fatalf("unexpected members after leave: %+v", state.Members)
+	}
+	if _, err := manager.GetByPlayer(2); !errors.Is(err, ErrPlayerNotInSquad) {
+		t.Fatalf("left player should not remain in squad index, got %v", err)
+	}
+
+	state, disbanded, err = manager.Leave(1)
+	if err != nil {
+		t.Fatalf("leader leave failed: %v", err)
+	}
+	if !disbanded || state != nil {
+		t.Fatalf("last member should disband squad: state=%+v disbanded=%v", state, disbanded)
+	}
+	if stats := manager.Stats(); stats.Squads != 0 || stats.Members != 0 {
+		t.Fatalf("disbanded squad should not remain in stats: %+v", stats)
 	}
 }
 
