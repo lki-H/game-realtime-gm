@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tokenauth "game-realtime-gm/backend/internal/auth"
+	gameleaderboard "game-realtime-gm/backend/internal/leaderboard"
 	gamematchmaking "game-realtime-gm/backend/internal/matchmaking"
 	gamemission "game-realtime-gm/backend/internal/mission"
 	gamesettlement "game-realtime-gm/backend/internal/settlement"
@@ -45,6 +46,7 @@ func WebSocketEcho(
 	missionManager *gamemission.Manager,
 	matchmakingManager *gamematchmaking.Manager,
 	settlementService *gamesettlement.Service,
+	leaderboardService *gameleaderboard.Service,
 ) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, ok := websocketPlayerClaims(c, jwtSecret)
@@ -639,6 +641,14 @@ func WebSocketEcho(
 						return
 					}
 					continue
+				}
+
+				if _, syncErr := leaderboardService.SyncSettlement(c.Request.Context(), result); syncErr != nil {
+					log.Printf(
+						"leaderboard sync settlement failed: mission_instance_id=%s err=%v",
+						result.Record.MissionInstanceID,
+						syncErr,
+					)
 				}
 
 				response := realtimews.NewServerMessage(

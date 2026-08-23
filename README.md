@@ -2,7 +2,7 @@
 
 这是一个持续迭代的 Go 后端学习项目，用于实现游戏业务中的玩家服务、管理员运营能力、在线状态和实时小队连接。
 
-当前代码已完成 Day 31：在任务结算记录基础上，新增任务级幂等、重复请求返回已有结果、玩家软货币强事务入账和 append-only 资产流水。
+当前代码已完成 Day 32：在幂等资产结算基础上，新增 Redis 个人最佳分排行榜、同分先达到者优先、我的排名和 MySQL 战绩分页。
 
 ## 当前边界
 
@@ -10,7 +10,7 @@
 - 小队状态保存在 Go 进程内存中，服务重启后会清空。
 - WebSocket 当前负责玩家连接、在线状态、小队、任务会话、匹配票据和结算记录消息。
 - MySQL 使用三层唯一约束保护结算幂等，并在同一事务中提交任务结果、granted reward、玩家余额和资产流水。
-- 当前尚未提供排行榜、玩家资产查询、GM 流水查询或服务重启后的任务恢复。
+- 当前尚未提供玩家资产查询、GM 流水查询、排行榜主动广播或服务重启后的任务恢复。
 - 当前不包含逐帧战斗模拟、物理或技能判定、怪物 AI、客户端预测及商业级网络同步。
 
 ## 技术栈
@@ -73,6 +73,9 @@
 - `mission_records.status=settled`，每名参与者生成一条 `reward_records.status=granted`
 - `SELECT ... FOR UPDATE` 锁定资产行，任务、reward、余额和 ledger 同事务提交或回滚
 - 其他在线任务参与者只在首次结算时收到 `settlement.created`
+- 结算成功后 best-effort 同步 Redis 排行榜，幂等重试可修复投影
+- 每个任务模板只保留每名玩家个人最佳分，同分时先达到者优先
+- HTTP 查询排行榜 Top N、当前玩家排名和 MySQL settled 战绩分页
 
 ## 数据职责
 
@@ -89,6 +92,7 @@ MySQL
 Redis
   online:player:<id>      当前玩家 WebSocket 在线状态和连接 ID
   matchmaking:*           匹配票据、任务等待队列、超时索引和玩家索引
+  leaderboard:{...}:*     每个任务的最佳分 ZSet 和玩家 member 索引
 
 Go 进程内存
   WebSocket 连接管理
@@ -110,6 +114,7 @@ game-realtime-gm/
 │       ├── config/          环境变量配置
 │       ├── database/        MySQL 连接、schema、seed 和 migration
 │       ├── handler/         HTTP 与 WebSocket handler
+│       ├── leaderboard/     Redis 最佳分排行、同分排序和 MySQL 战绩查询
 │       ├── matchmaking/     Redis 匹配票据、取消和超时
 │       ├── middleware/      玩家和管理员鉴权
 │       ├── model/           数据模型
@@ -218,6 +223,9 @@ POST /api/register
 POST /api/login
 GET  /api/me
 PATCH /api/me/nickname
+GET  /api/leaderboards/:mission_id
+GET  /api/leaderboards/:mission_id/me
+GET  /api/me/mission-records
 POST /api/admin/login
 GET  /api/admin/me
 GET  /api/admin/dashboard/summary

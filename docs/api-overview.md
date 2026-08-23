@@ -242,6 +242,105 @@ GET /api/players/1
 50012 query player failed
 ```
 
+## 排行榜与玩家战绩模块
+
+以下接口需要玩家 token。Day32 的 Redis 排行榜是 MySQL settled 结算的可重建查询投影，不参与资产入账。
+
+### GET /api/leaderboards/:mission_id
+
+用途：查询指定任务模板的 Top N 个人最佳分排行榜。
+
+查询参数：
+
+```text
+limit=10
+```
+
+默认 10，最大 50。示例：
+
+```text
+GET /api/leaderboards/day32_training_ground?limit=10
+```
+
+响应示例：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "mission_id": "day32_training_ground",
+    "items": [
+      {
+        "rank": 1,
+        "mission_id": "day32_training_ground",
+        "player_id": 9,
+        "username": "player01",
+        "nickname": "玩家01",
+        "score": 999,
+        "achieved_at": "2026-08-23T13:27:51+08:00",
+        "mission_record_id": 1
+      }
+    ]
+  }
+}
+```
+
+排序规则：分数高者优先；同分时先达到该分数者优先。每名玩家只保留个人最佳分，较低分和更晚达到的同分不会覆盖旧记录。
+
+### GET /api/leaderboards/:mission_id/me
+
+用途：查询当前 JWT 玩家在指定任务排行榜中的排名与最佳分。
+
+示例：
+
+```text
+GET /api/leaderboards/day32_training_ground/me
+```
+
+未上榜返回 `40490 player not ranked`。
+
+### GET /api/me/mission-records
+
+用途：分页查询当前玩家参与过的全部 settled 任务战绩。
+
+查询参数：
+
+```text
+page=1
+page_size=10
+```
+
+默认每页 10，最大 50。战绩通过 `reward_records.player_id` 识别任务参与者，因此非队长也能查询自己的任务记录。
+
+响应中的每条记录包含：
+
+```text
+mission_record_id
+mission_instance_id
+mission_id
+squad_id
+score
+completion_seconds
+settled_at
+```
+
+排行榜与战绩的区别：
+
+```text
+Redis 排行榜：每个 mission_id 下，每名玩家只保留一条最佳分
+MySQL 战绩：保存玩家参与的每一次 settled 任务
+```
+
+主要错误：
+
+```text
+40090 invalid leaderboard mission_id
+40490 player not ranked
+50090 query leaderboard failed
+50091 query mission history failed
+```
+
 ## WebSocket 实时连接模块
 
 ### GET /ws
@@ -825,6 +924,10 @@ SELECT ... FOR UPDATE 锁定 player_assets
 
 任一步失败都会整体回滚。当前小队和任务会话仍保存在 Go 进程内存中，服务重启后尚不能恢复旧任务上下文；也尚未提供玩家资产或 GM 流水查询接口。
 
+Day32 起，每次 `settlement.create` 成功返回后都会尝试把 settled 结果同步到 Redis 排行榜。同步使用 Lua 原子维护 ZSet 和玩家 member 索引；相同结算重试不会重复资产入账，但会再次尝试修复排行榜投影。
+
+MySQL 结算先提交，Redis 排行榜后同步。Redis 同步失败只记录 `leaderboard sync settlement failed` 日志，不会把已成功的资产结算改成失败，也不宣称实现了 MySQL/Redis 跨存储强事务、Outbox 或消息队列。
+
 当前 WebSocket 业务消息错误：
 
 | code | message | 场景 |
@@ -964,6 +1067,14 @@ WebSocket 验证重点：
 42. 查询 `mission_records`、`reward_records`、`player_assets` 和 `asset_ledger`，确认 settled/granted、余额和流水一一对应。
 43. 验证缺少任务 ID、缺少 nonce、非法 nonce 和未 finished 任务分别返回 `40037`、`40038`、`40039`、`40936`。
 44. 使用唯一 key、主键和临时玩家 ID 精确清理测试数据，不执行无条件 DELETE、TRUNCATE 或 DROP TABLE。
+45. 使用两个临时玩家分别完成同一 `mission_id` 的单人任务结算，确认 Top N 按分数降序。
+46. 删除该 mission 的两个排行榜 Redis key，重试已有结算，确认投影恢复且 MySQL 记录、余额和 ledger 不增加。
+47. 让第二名玩家先获得低分、再刷新为与第一名相同的高分，确认先达到同分者排名更高。
+48. 让第二名玩家再次获得低分，确认个人最佳分和对应 mission record ID 不被覆盖。
+49. 验证 leaderboard Top N、我的排名、未上榜 `40490`、非法 mission ID `40090` 和 limit 最大 50。
+50. 验证当前玩家战绩分页；非队长参与者也能通过 granted reward 关系查询自己的任务记录。
+51. 对照 Redis 每名玩家只有一条最佳分，而 MySQL 保存全部 settled 战绩。
+52. 精确清理临时玩家、mission/reward/ledger/asset、在线 key 和专用 leaderboard key。
 ```
 
 主要错误：
@@ -990,6 +1101,7 @@ Day 28 已新增小队成员在线状态、断线重连、队长转移和任务�
 Day 29 已新增 Redis matchmaking ticket、队列位置、取消、超时通知和残留清理。
 Day 30 已新增 finished 任务结算记录、pending 奖励记录、服务端分数计算、nonce 防重放和结算广播。
 Day 31 已新增任务级幂等、重复请求返回已有结果、player_assets、granted reward、asset_ledger 和核心资产强事务。
+Day 32 已新增 Redis 个人最佳分排行榜、Lua 原子更新、同分先达到者优先、我的排名和 MySQL 战绩分页。
 online_players 表示当前 Go 进程内管理器记录的在线玩家连接数量。
 online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
 同一个玩家重复连接时，旧连接会被新连接替换；连接管理器通过 connection_id 避免旧连接断开时误注销新连接。
@@ -997,7 +1109,7 @@ online_ttl_seconds 表示 Redis 在线状态 TTL 秒数。
 当前小队状态只保存在 Go 进程内存，服务重启后会清空。
 当前任务会话只保存在 Go 进程内存；它是业务生命周期元数据，不是战斗服进程。
 当前 matchmaking ticket 保存在 Redis，支持 queued/canceled/timeout；尚未实现 matched 和真正撮合成功。
-当前已支持小队、任务会话、匹配超时和幂等资产结算；排行榜消息、玩家资产查询、GM 流水查询和服务重启后的任务恢复尚未实现。
+当前已支持小队、任务会话、匹配超时、幂等资产结算、排行榜和玩家战绩查询；玩家资产查询、GM 流水查询、排行榜主动广播和服务重启后的任务恢复尚未实现。
 服务重启后，内存连接状态会清空。
 本地学习阶段使用 query 参数传 token；不要在日志里打印完整 token。
 ```

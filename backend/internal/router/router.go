@@ -11,6 +11,7 @@ import (
 
 	"game-realtime-gm/backend/internal/config"
 	"game-realtime-gm/backend/internal/handler"
+	"game-realtime-gm/backend/internal/leaderboard"
 	"game-realtime-gm/backend/internal/matchmaking"
 	"game-realtime-gm/backend/internal/middleware"
 	"game-realtime-gm/backend/internal/mission"
@@ -35,6 +36,8 @@ func New(ctx context.Context, db *sql.DB, redisClient *redis.Client, cfg config.
 	missionManager := mission.NewManager()
 	matchmakingManager := matchmaking.NewManager(redisClient)
 	settlementService := settlement.NewService(db, missionManager)
+	leaderboardService := leaderboard.NewService(db, redisClient)
+	leaderboardHandler := handler.NewLeaderboardHandler(leaderboardService)
 
 	r.GET("/health", handler.Health)
 	r.GET("/ws", handler.WebSocketEcho(
@@ -45,6 +48,7 @@ func New(ctx context.Context, db *sql.DB, redisClient *redis.Client, cfg config.
 		missionManager,
 		matchmakingManager,
 		settlementService,
+		leaderboardService,
 	))
 
 	go matchmakingManager.RunTimeoutLoop(
@@ -82,6 +86,9 @@ func New(ctx context.Context, db *sql.DB, redisClient *redis.Client, cfg config.
 	protected.GET("/players/:id", playerHandler.GetByID)
 	protected.POST("/online/heartbeat", onlineHandler.Heartbeat)
 	protected.GET("/online/status", onlineHandler.Status)
+	protected.GET("/leaderboards/:mission_id", leaderboardHandler.List)
+	protected.GET("/leaderboards/:mission_id/me", leaderboardHandler.Me)
+	protected.GET("/me/mission-records", leaderboardHandler.MyHistory)
 
 	adminProtected := api.Group("/admin")
 	adminProtected.Use(middleware.AdminAuth(cfg.JWTSecret))
