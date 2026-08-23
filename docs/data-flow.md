@@ -138,7 +138,7 @@ sequenceDiagram
     participant WS as WebSocket Handler
     participant Match as Matchmaking Manager
     participant Redis as Redis
-    participant Loop as Timeout Loop
+    participant TimeoutWorker as Timeout Loop
 
     Player->>WS: matchmaking.enqueue
     WS->>Match: Enqueue(mission_id, role)
@@ -155,8 +155,8 @@ sequenceDiagram
         Match->>Redis: remove queue + timeout
         WS-->>Player: canceled result
     else 到期
-        Loop->>Redis: 扫描 timeout index
-        Loop->>Match: CleanupExpired
+        TimeoutWorker->>Redis: 扫描 timeout index
+        TimeoutWorker->>Match: CleanupExpired
         Match->>Redis: remove queue + timeout
         WS-->>Player: matchmaking.state.changed(timeout)
     end
