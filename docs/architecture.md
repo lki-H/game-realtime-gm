@@ -1,222 +1,95 @@
-# 当前系统架构
+# 当前系统架构（HLD）
 
-> 状态：已实现架构
-> 最后更新：2026-08-23
-> 适用范围：公开项目文档 / 一期成果
+> 文档角色：当前高层架构、运行拓扑和系统边界
+> 权威级别：L1（HLD 事实源）
+> 状态：已实现
+> 适用范围：一期 Go 单体服务
+> 事实来源：`cmd/server`、`internal/router`、Docker Compose、MySQL schema 与 Redis 实现
+> 最后更新：2026-08-31
 
-## 架构范围
+## 1. 架构范围
 
-本文只描述当前仓库已经实现并验证的单体 Go 游戏业务服务。
+当前系统是单实例、单进程的模块化 Go 单体。它对外提供 HTTP API 和玩家 WebSocket，对内连接 MySQL、Redis，并可选择启动仅绑定本机的 pprof 服务。
 
-当前系统不是完整商业战斗服，也没有 React GM 页面、Unity 客户端、独立 Dedicated Server、微服务或 Kubernetes。
+本图不包含尚未实现的 React、Unity、Dedicated Server、微服务、Kubernetes 或云资源。
 
-## 运行拓扑
+## 2. 运行拓扑
 
 ```mermaid
 flowchart LR
-    subgraph Clients["当前客户端与测试工具"]
-        HTTPClient["Apifox / curl<br/>HTTP API"]
-        WSClient["Apifox / ws_bot<br/>WebSocket"]
-        AdminClient["管理员 API 调用方"]
+    subgraph Clients["客户端与验证工具"]
+        HTTP["Apifox / curl<br/>HTTP"]
+        WSBot["Apifox WS / ws_bot<br/>WebSocket"]
     end
 
-    subgraph GoProcess["单体 Go 进程"]
+    subgraph Process["单体 Go 进程"]
         Gin["Gin Router"]
-        Middleware["JWT / AdminAuth<br/>Request ID / AccessLog"]
-        Handlers["HTTP / WebSocket Handlers"]
-        Services["Settlement / Leaderboard<br/>Observation Services"]
-        Managers["WebSocket / Squad / Mission<br/>Matchmaking Managers"]
+        Middleware["Request ID / Access Log<br/>PlayerAuth / AdminAuth"]
+        Application["Handler / Service / Manager"]
+        Memory["进程内状态<br/>连接 / 小队 / 任务会话"]
     end
 
-    MySQL[("MySQL 8.4<br/>长期事实数据")]
-    Redis[("Redis 7<br/>实时状态与查询投影")]
-    Pprof["本机 pprof<br/>默认关闭"]
+    MySQL[("MySQL 8.4<br/>长期事实与资产事务")]
+    Redis[("Redis 7<br/>实时状态与可重建投影")]
+    Pprof["127.0.0.1 pprof<br/>默认关闭"]
 
-    HTTPClient -->|HTTP + Player JWT| Gin
-    WSClient -->|WebSocket + Player Token| Gin
-    AdminClient -->|HTTP + Admin JWT| Gin
-    Gin --> Middleware --> Handlers
-    Handlers --> Services
-    Handlers --> Managers
-    Services --> Managers
-    Handlers --> MySQL
-    Handlers --> Redis
-    Services --> MySQL
-    Services --> Redis
-    Managers --> Redis
-    GoProcess -. 独立本机端口 .-> Pprof
+    HTTP -->|HTTP + Bearer JWT| Gin
+    WSBot -->|WebSocket + player token| Gin
+    Gin --> Middleware --> Application
+    Application --> Memory
+    Application --> MySQL
+    Application --> Redis
+    Process -. 可选 .-> Pprof
 ```
 
-## 进程内模块
+## 3. 容器与进程
 
-```mermaid
-flowchart TB
-    Router["internal/router"]
-    AuthMW["internal/middleware<br/>玩家/管理员鉴权、Request ID、安全日志"]
-    Handler["internal/handler<br/>HTTP 与 WebSocket 入口"]
-    Auth["internal/auth<br/>JWT"]
-    Squad["internal/squad<br/>小队状态"]
-    Mission["internal/mission<br/>任务会话状态机"]
-    Match["internal/matchmaking<br/>Redis ticket 与超时"]
-    Settlement["internal/settlement<br/>幂等结算与资产事务"]
-    Ranking["internal/leaderboard<br/>Redis 排行与 MySQL 战绩"]
-    Observation["internal/observation<br/>GM 只读聚合"]
-    WS["internal/ws<br/>连接与消息 DTO"]
-    Database["internal/database<br/>MySQL 连接与 schema"]
-    Cache["internal/cache<br/>Redis 连接"]
-    Diagnostics["internal/diagnostics<br/>pprof"]
+| 组件 | 当前运行方式 | 端口 | 持久性 |
+| --- | --- | --- | --- |
+| Go 服务 | 宿主机 `go run`/二进制 | `8080` 默认 | 进程状态不持久 |
+| pprof | Go 内独立 HTTP server，默认关闭 | `127.0.0.1:6060` 默认 | 不保存 profile |
+| MySQL | Docker Compose | `3306` | Docker volume |
+| Redis | Docker Compose | `6379` | Docker volume，但业务只依赖其可重建/临时职责 |
 
-    Router --> AuthMW --> Handler
-    Handler --> Auth
-    Handler --> Squad
-    Handler --> Mission
-    Handler --> Match
-    Handler --> Settlement
-    Handler --> Ranking
-    Handler --> Observation
-    Handler --> WS
-    Settlement --> Mission
-    Ranking --> Database
-    Ranking --> Cache
-    Observation --> Squad
-    Observation --> Mission
-    Observation --> Match
-    Observation --> WS
-    Database --> MySQLNode[("MySQL")]
-    Cache --> RedisNode[("Redis")]
-    Match --> RedisNode
-    Settlement --> MySQLNode
-    Ranking --> MySQLNode
-    Ranking --> RedisNode
-    Diagnostics --> PprofNode["127.0.0.1 pprof"]
-```
+当前没有 Go 服务 Dockerfile、反向代理、TLS 终止、Ingress、负载均衡或自动部署。
 
-## 模块职责
+## 4. 数据所有权
 
-| 模块 | 当前职责 |
-| --- | --- |
-| `auth` | 玩家和管理员 JWT 生成、解析与身份类型区分 |
-| `middleware` | 玩家/管理员鉴权、Request ID、安全访问日志 |
-| `handler` | HTTP 参数解析、状态码、WebSocket 消息分发 |
-| `ws` | 连接注册、重复连接替换、发送锁、协议 DTO |
-| `squad` | 小队成员、队长、ready、在线状态和离队解散 |
-| `mission` | 任务会话生命周期和合法状态迁移 |
-| `matchmaking` | Redis ticket、任务队列、玩家索引和超时索引 |
-| `settlement` | 服务端结算、幂等、防重放、资产强事务 |
-| `leaderboard` | Redis 最佳分投影、同分排序和 MySQL 战绩查询 |
-| `observation` | 聚合当前进程、Redis 和 MySQL 的 GM 只读视图 |
-| `diagnostics` | 默认关闭的本机 pprof 服务 |
-
-## 数据职责
-
-```mermaid
-flowchart LR
-    Business["Go 业务逻辑"]
-    MySQL[("MySQL<br/>事实源")]
-    Redis[("Redis<br/>实时状态 / 投影")]
-    Memory["Go 进程内存<br/>当前运行状态"]
-
-    Business --> MySQL
-    Business --> Redis
-    Business --> Memory
-
-    MySQL --> M1["players / admins"]
-    MySQL --> M2["operation logs"]
-    MySQL --> M3["mission / reward records"]
-    MySQL --> M4["player assets / asset ledger"]
-
-    Redis --> R1["online:player:*"]
-    Redis --> R2["matchmaking:*"]
-    Redis --> R3["leaderboard:*"]
-
-    Memory --> P1["WebSocket clients"]
-    Memory --> P2["squads"]
-    Memory --> P3["mission instances"]
-```
-
-| 存储 | 适合的数据 | 当前限制 |
+| 数据 | 所有者 | 原因与恢复边界 |
 | --- | --- | --- |
-| MySQL | 账号、管理员、审计、结算、奖励、余额、流水 | 需要事务、唯一约束和迁移管理 |
-| Redis | 在线 TTL、匹配 ticket、等待队列、排行榜投影 | 不是核心资产唯一事实源 |
-| Go 内存 | WebSocket、小队、任务会话当前状态 | 单实例，服务重启后清空 |
+| 玩家、管理员、GM 审计 | MySQL | 长期事实，需要查询、唯一约束和事务 |
+| 任务结算、奖励、余额、资产流水 | MySQL | 资产事实源，必须强事务与幂等 |
+| 在线状态 | Redis | TTL 型近实时状态，失效后可由客户端重建 |
+| 匹配 ticket、队列、超时索引 | Redis | 高频、短期状态，当前不要求跨故障恢复承诺 |
+| 排行榜 | Redis 投影，MySQL 为来源 | 查询优化，可从 settled 记录重建 |
+| WebSocket 连接 | Go 内存 | 仅当前进程有效 |
+| 小队与任务会话 | Go 内存 | 一期业务原型，服务重启后清空 |
 
-## 一致性边界
+## 5. 信任边界
 
-### 结算与资产
+- 公共网络输入进入 Gin/WebSocket Handler 前均视为不可信。
+- 玩家与管理员通过不同 JWT subject 类型隔离。
+- 客户端不能提交可信分数、奖励或最终资产余额。
+- MySQL 提交后的结算是事实；Redis 排行同步失败不能回滚资产事务。
+- GM 实时观察跨内存、Redis、MySQL 依次读取，不是原子快照。
 
-```text
-MySQL transaction
-  mission_records
-  reward_records
-  player_assets
-  asset_ledger
-```
+详细风险与控制见 [安全设计](security-design.md)。
 
-四类写入在同一个事务中提交或回滚。`mission_instance_id`、`idempotency_key` 和玩家 nonce 提供三层唯一约束。
+## 6. 可用性与扩展边界
 
-### 排行榜
+当前只验证单实例本地运行：
 
-```text
-MySQL settled result
-  -> transaction commit
-  -> best-effort Redis leaderboard projection
-```
+- Go 进程故障会中断全部 HTTP/WebSocket，并丢失连接、小队和任务会话。
+- 没有服务发现、健康探针编排、自动重启 Go 服务或多副本切换。
+- 内存 Manager 使服务不能直接水平扩展。
+- Redis 和 MySQL 都是单容器开发配置，没有高可用或自动故障转移。
+- 没有生产 SLO、RPO/RTO 或容量承诺。
 
-Redis 排行榜可重建，不参与资产入账。同步失败不会回滚已经成功的 MySQL 资产事务。
+## 7. 当前非目标
 
-### GM 摘要
+- 完整战斗服、固定 Tick 或商业级网络同步。
+- 微服务、Zinx、消息队列、Kubernetes、Agones 或服务网格。
+- 正式 React/Unity 客户端、云端环境或生产监控平台。
+- 将本机 Day34 数据外推为商业并发能力。
 
-GM 摘要依次读取当前进程 Manager、Redis 和 MySQL，是带 `observed_at` 的近实时视图，不是跨组件原子快照。
-
-## 安全边界
-
-- 玩家 token 和管理员 token 使用不同 subject type。
-- `/api/admin/*` 只接受管理员 token。
-- WebSocket 只接受玩家 token。
-- 密码只保存 bcrypt hash。
-- SQL 使用参数占位符。
-- 危险 GM 写操作记录数据库审计。
-- AccessLog 不记录 query、Authorization 或 body。
-- 正常访问日志不会记录 WebSocket query token。
-- 服务端不逐条记录高频原始 WebSocket payload。
-- Request ID 只用于日志关联，不用于鉴权或结算幂等。
-
-## 诊断边界
-
-pprof：
-
-- 默认关闭。
-- 使用独立 `127.0.0.1` 端口。
-- 不注册到业务 Gin Router。
-- 原始 profile 保存在仓库外。
-- 只用于本机诊断，不是监控或公网管理接口。
-
-## 当前部署模型
-
-```text
-Windows 开发机
-  Docker Desktop
-    MySQL 8.4
-    Redis 7
-  Go server process
-  ws_bot / Apifox
-```
-
-当前没有多实例、负载均衡、服务发现、容器化 Go 服务或自动扩缩容。
-
-## 当前非目标
-
-- 逐帧战斗模拟。
-- 物理、技能命中和怪物 AI。
-- 客户端预测与延迟补偿。
-- 完整匹配撮合成功。
-- 跨服和多实例状态同步。
-- React GM 页面与 Unity Demo。
-- 商业级容量和可用性承诺。
-
-## 验证入口
-
-- [API 与 WebSocket](api-overview.md)
-- [关键数据流](data-flow.md)
-- [一期能力总结](phase1-summary.md)
-- [Day34 性能证据](performance/day34-baseline.md)
+模块内部调用、锁、状态机、事务和失败处理见 [系统详细设计](system-design.md)。

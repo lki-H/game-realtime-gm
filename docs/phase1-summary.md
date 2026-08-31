@@ -1,148 +1,55 @@
-# 一期成果总结
+# 一期成果与工程证据
 
-> 状态：一期完成
-> 最后更新：2026-08-23
-> 适用范围：公开项目文档 / 项目复盘
+> 文档角色：Day27-Day35 阶段复盘与证据摘要
+> 权威级别：L2（已完成阶段记录）
+> 状态：一期已完成
+> 适用范围：求职展示、阶段复盘与后续验收基线
+> 事实来源：代码、测试、Day27-Day35 验收与 Day34 性能记录
+> 最后更新：2026-08-31
 
-## 一期目标
+## 阶段目标
 
-一期目标是完成一个可运行、可测试、可解释的单体 Go 游戏业务后端。
+一期将基础账号与 GM 后台扩展为可验证的共斗 PVE 业务后台闭环，同时明确它不是完整战斗服。
 
-它覆盖账号、权限、实时连接、小队、任务会话、匹配 ticket、幂等结算、资产、排行榜和 GM 观察，但不包含逐帧战斗模拟。
+## Day27-Day35 交付
 
-## 技术栈
-
-- Go 1.25。
-- Gin。
-- `database/sql` + MySQL Driver。
-- MySQL 8.4.11。
-- Redis 7。
-- Gorilla WebSocket。
-- JWT + bcrypt。
-- Docker Compose。
-
-## 能力矩阵
-
-| 能力 | 主要代码 | 数据位置 | 验证证据 |
-| --- | --- | --- | --- |
-| 玩家注册登录 | `handler/auth.go`、`auth` | MySQL | API 测试、单元检查 |
-| 玩家/管理员权限隔离 | `middleware/auth.go` | JWT claims | 403/401 真实流程 |
-| GM 玩家管理与审计 | `handler/admin*.go` | MySQL | 封禁、解封、日志查询 |
-| WebSocket 生命周期 | `handler/ws.go`、`ws` | 内存 + Redis TTL | 连接替换、ping/pong、测试 |
-| 小队状态 | `squad` | Go 内存 | create/join/ready/leave、广播测试 |
-| 任务会话状态机 | `mission` | Go 内存 | 合法/非法迁移测试 |
-| 匹配 ticket | `matchmaking` | Redis | enqueue/me/cancel/timeout |
-| 幂等结算 | `settlement` | MySQL | 三层唯一约束、重复请求 |
-| 玩家资产 | `settlement`、`model` | MySQL | FOR UPDATE、事务、ledger |
-| 排行榜 | `leaderboard` | Redis + MySQL | 同分先到、Top N、战绩 |
-| GM 实时观察 | `observation` | 内存 + Redis + MySQL | 摘要、玩家上下文、筛选 |
-| 工程诊断 | `diagnostics`、`ws_bot` | 本机 | pprof、race、性能报告 |
-
-## 核心工程决策
-
-### 保持单体
-
-一期使用单体 Go 进程，便于学习、调试、测试和解释。当前规模没有证据要求拆分微服务。
-
-### MySQL 与 Redis 分工
-
-```text
-MySQL：长期事实、事务、唯一约束、资产和审计
-Redis：在线 TTL、匹配状态、排行榜查询投影
-内存：当前连接、小队和任务会话
-```
-
-### 任务会话不是战斗服
-
-`mission_instance` 只表示任务业务与结算生命周期。当前没有固定 Tick、物理、技能、AI、预测或延迟补偿。
-
-### 资产强事务
-
-任务记录、奖励记录、余额和流水在同一 MySQL 事务中提交。核心资产不使用纯异步 Redis 写回。
-
-### Redis 排行榜是投影
-
-排行榜在 MySQL 结算成功后 best-effort 更新。Redis 失败不能回滚已经成功的资产事务，投影允许重建。
-
-### 只读观察不污染危险操作审计
-
-Dashboard 和实时观察使用标准日志。封禁、解封等危险写操作继续写 `admin_operation_logs`。
-
-## 测试与验证
-
-### 常规检查
-
-```powershell
-go test ./...
-go vet ./...
-docker compose config
-```
-
-### Race
-
-Windows 本机没有 GCC。使用官方 Go Linux Docker 镜像执行：
-
-```powershell
-docker run --rm -v "${PWD}:/workspace" -w /workspace golang:1.25-bookworm go test -race ./...
-```
-
-全部包通过。Race 只覆盖测试实际执行到的路径。
-
-### Day34 本机基线
-
-```text
-20 个 WebSocket 客户端
-5 个四人小队
-10000 次 debug.echo
-所有 stage failure=0
-echo Average=106us
-echo P95=611us
-echo Maximum=2.513ms
-hold goroutine=70
-cleanup goroutine=8
-```
-
-这些数字来自同机回环网络，只用于后续同环境对比。
-
-## 真实问题与修复
-
-| 问题 | 根因 | 修复 |
+| Day | 已完成能力 | 主要证据 |
 | --- | --- | --- |
-| 旧连接断开可能影响新连接 | 只按 player_id 注销 | connection_id 条件注销 |
-| 排行榜同分顺序不稳定 | 只使用普通分数排序 | 反向时间 member 编码 |
-| 重复结算可能重复发奖 | 缺少完整业务约束 | 三层唯一约束 + 事务 |
-| 离队成功后成员仍残留 | `nextMembers` 未写回 | 写回成员切片并补回归测试 |
-| WS query token 进入访问日志 | Gin 默认 URI 日志 | 自定义只记录 path 的 AccessLog |
-| 高频 echo 产生海量日志 | 原始 payload 和 interval 全量日志 | 删除 payload 日志，interval 静默等待 |
+| 27 | 小队状态广播、统一 WS 错误、消息大小限制 | Handler/消息协议、小队测试 |
+| 28 | 任务会话状态机、断线/重连与队长转移 | mission/squad tests |
+| 29 | Redis 匹配 ticket、取消、超时和清理 | matchmaking tests、Redis 对照 |
+| 30 | 任务结算、服务端计算、nonce | schema、settlement 代码 |
+| 31 | 幂等资产强事务、余额和流水 | UNIQUE、`FOR UPDATE`、事务测试 |
+| 32 | Redis 最佳分排行、同分顺序、战绩查询 | leaderboard tests、HTTP API |
+| 33 | GM 实时摘要、玩家观察、结算与榜单 | observation tests、Request ID 日志 |
+| 34 | `ws_bot`、pprof、Linux race、性能基线 | `performance/day34-baseline.md` |
+| 35 | README、架构、数据流和一期边界收口 | 公开文档与验收记录 |
 
-## 当前边界
+## 验证证据
 
-- 单实例 Go 服务。
+- Go 单元测试覆盖配置、Request ID、访问日志、WebSocket Manager、小队、任务、匹配、结算、排行、观察和 `ws_bot` 指标。
+- `go vet ./...` 通过。
+- 官方 Linux Go 镜像内 `go test -race ./...` 通过；只覆盖自动测试执行到的路径。
+- Day34 本机 8 客户端冒烟与 20 客户端、10000 echo 短时基线均记录为 0 失败。
+- AccessLog 测试与实际日志确认只记录 path，不输出 WebSocket query token。
+- 原始 profile、goroutine 和运行日志保存在仓库外，没有作为公开材料提交。
+
+## 发现并修复的问题
+
+Day34 真实冒烟发现小队离队后成员切片未写回，补充修复与回归测试；同时将 `ws_bot` 高频等待改为静默 timer，避免压测日志淹没结果。这些属于测试环境工程证据，不是生产事故经验。
+
+## 当前限制
+
+- 单机、单进程、回环网络，客户端与服务端共享一台机器。
 - 小队和任务会话重启后清空。
-- 匹配没有 matched 撮合算法。
-- 没有完整资产查询和补偿 API。
-- Redis 排行榜没有自动重建任务。
-- 没有 React GM 页面或 Unity Demo。
-- 没有公网部署、弱网、soak 或多实例验证。
-- Day34 性能结果不是生产容量。
+- 匹配没有成功撮合与 `matched` 状态。
+- Redis 排行榜没有自动重建或赛季管理。
+- 没有正式 React/Unity 客户端、云部署、CI/CD、弱网或长时间 soak。
+- 没有登录限流、token 撤销、刷新 token 和正式 Secret 管理。
+- Day34 数据不是容量上限、SLO、商业 CCU 或生产性能证明。
 
-## 一期完成标准
+## 一期结论
 
-- [x] 主要业务模块形成闭环。
-- [x] HTTP 和 WebSocket 契约可验证。
-- [x] MySQL、Redis 和内存职责清楚。
-- [x] 核心资产具备事务和幂等保护。
-- [x] 管理员权限和危险操作审计存在。
-- [x] 单元测试、vet 和 Docker race 通过。
-- [x] 有自动多玩家工具和性能基线。
-- [x] 测试数据已清理。
-- [x] 架构、数据流、API 和性能证据可阅读。
-- [x] 已知限制没有包装成已实现能力。
+项目已经具备可运行、可测试、可追踪、可解释的 Go 游戏业务后台闭环。后续工作应优先补真实工程缺口和展示客户端，而不是把当前服务重新命名为微服务或战斗服。
 
-## 文档入口
-
-- [项目入口和快速启动](../README.md)
-- [当前系统架构](architecture.md)
-- [关键业务数据流](data-flow.md)
-- [API 与 WebSocket](api-overview.md)
-- [性能和 race 证据](performance/day34-baseline.md)
+详细测试边界见 [测试计划](test-plan.md)，架构边界见 [当前系统架构](architecture.md)。
