@@ -1,0 +1,1791 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Game Realtime GM HTTP API
+  version: 2.0.0
+  summary: 当前单体 Go 服务的 HTTP 机器契约
+  description: |
+    本文件描述 `backend/internal/router/router.go` 中的 legacy 公共 HTTP 及 V2 查询接口。
+    V2 路径仅在 GAMEPLAY_MODE=v2 中注册，内部事件监听器不属于公共契约。
+    所有 HTTP 响应都包含 `X-Request-ID` 响应头。WebSocket `/ws` 的连接与消息契约
+    由 `docs/ws-protocol.md` 单独维护，不在 OpenAPI 中建模业务消息。
+externalDocs:
+  description: WebSocket JSON protocol
+  url: ./ws-protocol.md
+x-document-metadata:
+  role: HTTP 机器可读契约
+  authority: L1
+  status: 已实现
+  scope: 当前 Go 单体服务 HTTP 路由
+  fact-source: backend/internal/router/router.go 与当前 Handler
+  last-updated: 2026-10-06
+servers:
+  - url: http://localhost:8080
+    description: 本地开发服务
+tags:
+  - name: Health
+  - name: Authentication
+  - name: Player
+  - name: Presence
+  - name: Leaderboard
+  - name: Admin
+  - name: Admin Audit
+  - name: Admin Observation
+  - name: V2 PVE
+  - name: Admin V2 PVE
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      operationId: getHealth
+      summary: 健康检查
+      description: 只证明 Go HTTP 进程能够响应，不检查 MySQL、Redis 或业务状态。
+      security: []
+      responses:
+        "200":
+          description: Go HTTP 服务正常响应
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                code: 0
+                message: ok
+
+  /api/register:
+    post:
+      tags: [Authentication]
+      operationId: registerPlayer
+      summary: 注册玩家
+      description: 在同一个 MySQL 事务中创建玩家与零余额资产行。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+            example:
+              username: player01
+              password: "123456"
+              nickname: 玩家01
+      x-error-codes:
+        - {status: 400, code: 40001, message: invalid request}
+        - {status: 409, code: 40901, message: username already exists}
+        - {status: 500, code: 50001, message: generate password hash failed}
+        - {status: 500, code: 50002, message: create player failed}
+      responses:
+        "201":
+          description: 注册成功
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/login:
+    post:
+      tags: [Authentication]
+      operationId: loginPlayer
+      summary: 玩家登录
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+            example:
+              username: player01
+              password: "123456"
+      x-error-codes:
+        - {status: 400, code: 40001, message: invalid request}
+        - {status: 401, code: 40101, message: username or password is wrong}
+        - {status: 403, code: 40321, message: player is banned}
+        - {status: 500, code: 50003, message: query player failed}
+        - {status: 500, code: 50004, message: generate token failed}
+      responses:
+        "200":
+          description: 登录成功并返回 24 小时玩家 JWT
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerLoginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/admin/login:
+    post:
+      tags: [Authentication]
+      operationId: loginAdmin
+      summary: 管理员登录
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminLoginRequest"
+            example:
+              username: admin
+              password: local-development-password
+      x-error-codes:
+        - {status: 400, code: 40011, message: invalid request}
+        - {status: 401, code: 40111, message: username or password is wrong}
+        - {status: 500, code: 50031, message: query admin failed}
+        - {status: 500, code: 50032, message: generate admin token failed}
+      responses:
+        "200":
+          description: 登录成功并返回 24 小时管理员 JWT
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminLoginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/me:
+    get:
+      tags: [Player]
+      operationId: getCurrentPlayer
+      summary: 查询当前玩家
+      security:
+        - PlayerBearer: []
+      x-error-codes:
+        - {status: 404, code: 40401, message: player not found}
+        - {status: 500, code: 50010, message: query player failed}
+      responses:
+        "200":
+          $ref: "#/components/responses/PlayerSuccess"
+        "401":
+          $ref: "#/components/responses/PlayerUnauthorized"
+        "403":
+          $ref: "#/components/responses/PlayerForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/me/nickname:
+    patch:
+      tags: [Player]
+      operationId: updateCurrentPlayerNickname
+      summary: 修改当前玩家昵称
+      security:
+        - PlayerBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateNicknameRequest"
+            example:
+              nickname: 新昵称
+      x-error-codes:
+        - {status: 400, code: 40002, message: invalid request}
+        - {status: 400, code: 40003, message: nickname cannot be empty}
+        - {status: 404, code: 40401, message: player not found}
+        - {status: 500, code: 50011, message: update nickname failed}
+      responses:
+        "200":
+          $ref: "#/components/responses/PlayerSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/PlayerUnauthorized"
+        "403":
+          $ref: "#/components/responses/PlayerForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/players:
+    get:
+      tags: [Player]
+      operationId: listPlayersForPlayer
+      summary: 玩家侧分页查询玩家
+      security:
+        - PlayerBearer: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Keyword"
+      x-error-codes:
+        - {status: 500, code: 50013, message: count players failed}
+        - {status: 500, code: 50014, message: query player list failed}
+        - {status: 500, code: 50015, message: scan player failed}
+        - {status: 500, code: 50016, message: read player rows failed}
+      responses:
+        "200":
+          description: 玩家分页结果；非法分页值回退默认值，page_size 最大 50
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerListResponse"
+        "401":
+          $ref: "#/components/responses/PlayerUnauthorized"
+        "403":
+          $ref: "#/components/responses/PlayerForbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/players/{id}:
+    get:
+      tags: [Player]
+      operationId: getPlayerByIdForPlayer
+      summary: 玩家侧查询玩家详情
+      security:
+        - PlayerBearer: []
+      parameters:
+        - $ref: "#/components/parameters/PlayerId"
+      x-error-codes:
+        - {status: 400, code: 40004, message: invalid player id}
+        - {status: 404, code: 40401, message: player not found}
+        - {status: 500, code: 50012, message: query player failed}
+      responses:
+        "200":
+          $ref: "#/components/responses/PlayerSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/PlayerUnauthorized"
+        "403":
+          $ref: "#/components/responses/PlayerForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/online/heartbeat:
+    post:
+      tags: [Presence]
+      operationId: heartbeatCurrentPlayer
+      summary: 续期玩家在线状态
+      security:
+        - PlayerBearer: []
+      x-error-codes:
+        - {status: 500, code: 50020, message: update online status failed}
+      responses:
+        "200":
+          description: Redis 在线 key 已写入，TTL 为 120 秒
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnlineHeartbeatResponse"
+        "401":
+          $ref: "#/components/responses/PlayerUnauthorized"
+        "403":
+          $ref: "#/components/responses/PlayerForbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/online/status:
+    get:
+      tags: [Presence]
+      operationId: getCurrentPlayerOnlineStatus
+      summary: 查询当前玩家在线状态
+      security:
+        - PlayerBearer: []
+      x-error-codes:
+        - {status: 500, code: 50021, message: query online status failed}
+      responses:
+        "200":
+          description: 根据 Redis online key 是否存在返回结果
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnlineStatusResponse"
+        "401":
+          $ref: "#/components/responses/PlayerUnauthorized"
+        "403":
+          $ref: "#/components/responses/PlayerForbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/leaderboards/{mission_id}:
+    get:
+      tags: [Leaderboard]
+      operationId: listLeaderboard
+      summary: 查询任务 Top N 排行榜
+      description: 返回 Redis 中每名玩家的个人最佳分；分数高者优先，同分先达到者优先。
+      security:
+        - PlayerBearer: []
+      parameters:
+        - $ref: "#/components/parameters/MissionId"
+        - $ref: "#/components/parameters/LeaderboardLimit"
+      x-error-codes:
+        - {status: 400, code: 40090, message: invalid leaderboard mission_id}
+        - {status: 500, code: 50090, message: query leaderboard failed}
+      responses:
+        "200":
+          description: 排行榜条目
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaderboardListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/PlayerUnauthorized"
+        "403":
+          $ref: "#/components/responses/PlayerForbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/leaderboards/{mission_id}/me:
+    get:
+      tags: [Leaderboard]
+      operationId: getCurrentPlayerLeaderboardEntry
+      summary: 查询当前玩家排名
+      security:
+        - PlayerBearer: []
+      parameters:
+        - $ref: "#/components/parameters/MissionId"
+      x-error-codes:
+        - {status: 400, code: 40090, message: invalid leaderboard mission_id}
+        - {status: 404, code: 40490, message: player not ranked}
+        - {status: 500, code: 50090, message: query leaderboard failed}
+      responses:
+        "200":
+          description: 当前玩家最佳成绩与排名
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaderboardEntryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/PlayerUnauthorized"
+        "403":
+          $ref: "#/components/responses/PlayerForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/me/mission-records:
+    get:
+      tags: [Leaderboard]
+      operationId: listCurrentPlayerMissionRecords
+      summary: 分页查询当前玩家战绩
+      security:
+        - PlayerBearer: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      x-error-codes:
+        - {status: 500, code: 50091, message: query mission history failed}
+      responses:
+        "200":
+          description: 当前玩家参与的 settled 任务历史
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HistoryPageResponse"
+        "401":
+          $ref: "#/components/responses/PlayerUnauthorized"
+        "403":
+          $ref: "#/components/responses/PlayerForbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/admin/me:
+    get:
+      tags: [Admin]
+      operationId: getCurrentAdmin
+      summary: 查询当前管理员身份
+      security:
+        - AdminBearer: []
+      x-error-codes:
+        - {status: 401, code: 40115, message: admin identity missing}
+      responses:
+        "200":
+          description: 当前管理员 JWT 中的身份
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminIdentityResponse"
+        "401":
+          $ref: "#/components/responses/AdminUnauthorized"
+        "403":
+          $ref: "#/components/responses/AdminForbidden"
+
+  /api/admin/dashboard/summary:
+    get:
+      tags: [Admin]
+      operationId: getAdminDashboardSummary
+      summary: 查询 GM Dashboard 摘要
+      security:
+        - AdminBearer: []
+      x-error-codes:
+        - {status: 500, code: 50091, message: count total players failed}
+        - {status: 500, code: 50092, message: count normal players failed}
+        - {status: 500, code: 50093, message: count banned players failed}
+        - {status: 500, code: 50094, message: count today new players failed}
+        - {status: 500, code: 50095, message: count online players failed}
+        - {status: 500, code: 50096, message: count today admin operations failed}
+      responses:
+        "200":
+          description: MySQL 玩家/审计统计与 Redis 在线 key 统计
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummaryResponse"
+        "401":
+          $ref: "#/components/responses/AdminUnauthorized"
+        "403":
+          $ref: "#/components/responses/AdminForbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/admin/dashboard/recent-operation-logs:
+    get:
+      tags: [Admin Audit]
+      operationId: listRecentAdminOperationLogs
+      summary: 查询最近 GM 操作日志
+      security:
+        - AdminBearer: []
+      parameters:
+        - $ref: "#/components/parameters/RecentLogLimit"
+      x-error-codes:
+        - {status: 500, code: 50101, message: query recent operation logs failed}
+        - {status: 500, code: 50102, message: scan recent operation log failed}
+        - {status: 500, code: 50103, message: read recent operation log rows failed}
+      responses:
+        "200":
+          description: 按 ID 倒序的最近日志，limit 最大 20
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecentOperationLogsResponse"
+        "401":
+          $ref: "#/components/responses/AdminUnauthorized"
+        "403":
+          $ref: "#/components/responses/AdminForbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/admin/players:
+    get:
+      tags: [Admin]
+      operationId: listPlayersForAdmin
+      summary: GM 分页查询玩家
+      security:
+        - AdminBearer: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Keyword"
+      x-error-codes:
+        - {status: 500, code: 50041, message: count players failed}
+        - {status: 500, code: 50042, message: query player list failed}
+        - {status: 500, code: 50043, message: scan player failed}
+        - {status: 500, code: 50044, message: read player rows failed}
+      responses:
+        "200":
+          description: 玩家分页结果；成功后 best-effort 记录查询审计
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerListResponse"
+        "401":
+          $ref: "#/components/responses/AdminUnauthorized"
+        "403":
+          $ref: "#/components/responses/AdminForbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/admin/players/{id}:
+    get:
+      tags: [Admin]
+      operationId: getPlayerByIdForAdmin
+      summary: GM 查询玩家详情
+      security:
+        - AdminBearer: []
+      parameters:
+        - $ref: "#/components/parameters/PlayerId"
+      x-error-codes:
+        - {status: 400, code: 40041, message: invalid player id}
+        - {status: 404, code: 40441, message: player not found}
+        - {status: 500, code: 50045, message: query player failed}
+      responses:
+        "200":
+          $ref: "#/components/responses/PlayerSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AdminUnauthorized"
+        "403":
+          $ref: "#/components/responses/AdminForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/admin/players/{id}/ban:
+    post:
+      tags: [Admin]
+      operationId: banPlayer
+      summary: 封禁玩家
+      description: 玩家状态变化与 GM 审计记录在同一个 MySQL 事务提交。
+      security:
+        - AdminBearer: []
+      parameters:
+        - $ref: "#/components/parameters/PlayerId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReasonRequest"
+            example:
+              reason: 违规行为
+      x-error-codes:
+        - {status: 400, code: 40051, message: invalid player id}
+        - {status: 400, code: 40052, message: invalid request}
+        - {status: 400, code: 40053, message: ban reason cannot be empty}
+        - {status: 400, code: 40054, message: ban reason is too long}
+        - {status: 401, code: 40116, message: admin identity missing}
+        - {status: 404, code: 40451, message: player not found}
+        - {status: 409, code: 40951, message: player already banned}
+        - {status: 500, code: 50051, message: begin transaction failed}
+        - {status: 500, code: 50052, message: query player status failed}
+        - {status: 500, code: 50053, message: ban player failed}
+        - {status: 500, code: 50054, message: record ban operation failed}
+        - {status: 500, code: 50055, message: commit transaction failed}
+      responses:
+        "200":
+          $ref: "#/components/responses/PlayerSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AdminUnauthorized"
+        "403":
+          $ref: "#/components/responses/AdminForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/admin/players/{id}/unban:
+    post:
+      tags: [Admin]
+      operationId: unbanPlayer
+      summary: 解封玩家
+      description: 玩家状态变化与 GM 审计记录在同一个 MySQL 事务提交。
+      security:
+        - AdminBearer: []
+      parameters:
+        - $ref: "#/components/parameters/PlayerId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReasonRequest"
+            example:
+              reason: 申诉通过
+      x-error-codes:
+        - {status: 400, code: 40061, message: invalid player id}
+        - {status: 400, code: 40062, message: invalid request}
+        - {status: 400, code: 40063, message: unban reason cannot be empty}
+        - {status: 400, code: 40064, message: unban reason is too long}
+        - {status: 404, code: 40461, message: player not found}
+        - {status: 409, code: 40961, message: player is not banned}
+        - {status: 500, code: 50061, message: begin transaction failed}
+        - {status: 500, code: 50062, message: query player status failed}
+        - {status: 500, code: 50063, message: unban player failed}
+        - {status: 500, code: 50064, message: record unban operation failed}
+        - {status: 500, code: 50065, message: commit transaction failed}
+      responses:
+        "200":
+          $ref: "#/components/responses/PlayerSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AdminUnauthorized"
+        "403":
+          $ref: "#/components/responses/AdminForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/admin/operation-log-actions:
+    get:
+      tags: [Admin Audit]
+      operationId: listAdminOperationLogActions
+      summary: 查询 GM 审计动作选项
+      security:
+        - AdminBearer: []
+      responses:
+        "200":
+          description: 当前代码支持的审计动作筛选项
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperationLogActionsResponse"
+        "401":
+          $ref: "#/components/responses/AdminUnauthorized"
+        "403":
+          $ref: "#/components/responses/AdminForbidden"
+
+  /api/admin/operation-logs:
+    get:
+      tags: [Admin Audit]
+      operationId: listAdminOperationLogs
+      summary: 分页筛选 GM 操作日志
+      security:
+        - AdminBearer: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: action
+          in: query
+          schema: {type: string}
+        - name: admin_username
+          in: query
+          schema: {type: string}
+        - name: target_type
+          in: query
+          schema: {type: string}
+        - name: target_id
+          in: query
+          schema: {type: integer, format: int64, minimum: 1}
+        - name: start_time
+          in: query
+          schema: {type: string, format: date-time}
+        - name: end_time
+          in: query
+          schema: {type: string, format: date-time}
+        - name: range
+          in: query
+          description: 仅在未提供 start_time/end_time 时生效
+          schema:
+            type: string
+            enum: [today, last_7_days, last_30_days]
+      x-error-codes:
+        - {status: 400, code: 40071, message: invalid target id}
+        - {status: 400, code: 40072, message: invalid start_time}
+        - {status: 400, code: 40073, message: invalid end_time}
+        - {status: 400, code: 40074, message: start_time cannot be after end_time}
+        - {status: 400, code: 40075, message: invalid range}
+        - {status: 500, code: 50071, message: count operation logs failed}
+        - {status: 500, code: 50072, message: query operation logs failed}
+        - {status: 500, code: 50073, message: scan operation log failed}
+        - {status: 500, code: 50074, message: read operation log rows failed}
+      responses:
+        "200":
+          description: 审计日志分页结果
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperationLogPageResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AdminUnauthorized"
+        "403":
+          $ref: "#/components/responses/AdminForbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/admin/operation-logs/{id}:
+    get:
+      tags: [Admin Audit]
+      operationId: getAdminOperationLogById
+      summary: 查询单条 GM 操作日志
+      security:
+        - AdminBearer: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: int64, minimum: 1}
+      x-error-codes:
+        - {status: 400, code: 40081, message: invalid operation log id}
+        - {status: 404, code: 40481, message: operation log not found}
+        - {status: 500, code: 50081, message: query operation log failed}
+      responses:
+        "200":
+          description: 单条审计日志
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperationLogResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AdminUnauthorized"
+        "403":
+          $ref: "#/components/responses/AdminForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/admin/realtime/summary:
+    get:
+      tags: [Admin Observation]
+      operationId: getAdminRealtimeSummary
+      summary: 查询当前单体实例的近实时摘要
+      description: 依次读取进程内 Manager、Redis 和 MySQL，不是原子快照或多实例全服指标。
+      security:
+        - AdminBearer: []
+      x-error-codes:
+        - {status: 500, code: 50201, message: query realtime summary failed}
+      responses:
+        "200":
+          description: 当前实例聚合结果
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RealtimeSummaryResponse"
+        "401":
+          $ref: "#/components/responses/AdminUnauthorized"
+        "403":
+          $ref: "#/components/responses/AdminForbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/admin/realtime/players/{id}:
+    get:
+      tags: [Admin Observation]
+      operationId: getAdminPlayerObservation
+      summary: 聚合观察玩家业务上下文
+      security:
+        - AdminBearer: []
+      parameters:
+        - $ref: "#/components/parameters/PlayerId"
+      x-error-codes:
+        - {status: 400, code: 40092, message: invalid observation player id}
+        - {status: 404, code: 40492, message: observation player not found}
+        - {status: 500, code: 50202, message: query player observation failed}
+      responses:
+        "200":
+          description: 玩家、余额、在线、小队、任务、匹配与最近结算的只读聚合
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerObservationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AdminUnauthorized"
+        "403":
+          $ref: "#/components/responses/AdminForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/admin/settlements:
+    get:
+      tags: [Admin Observation]
+      operationId: listAdminSettlements
+      summary: 分页查询 settled 结算
+      security:
+        - AdminBearer: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - name: page_size
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+        - name: mission_id
+          in: query
+          schema: {type: string}
+        - name: player_id
+          in: query
+          description: 按 granted reward 的参与玩家筛选
+          schema: {type: integer, format: int64, minimum: 1}
+      x-error-codes:
+        - {status: 400, code: 40093, message: invalid settlement player id}
+        - {status: 500, code: 50203, message: query settlements failed}
+      responses:
+        "200":
+          description: settled 结算分页结果
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettlementPageResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AdminUnauthorized"
+        "403":
+          $ref: "#/components/responses/AdminForbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/admin/leaderboards/{mission_id}:
+    get:
+      tags: [Admin Observation]
+      operationId: listLeaderboardForAdmin
+      summary: GM 查询任务 Top N 排行榜
+      security:
+        - AdminBearer: []
+      parameters:
+        - $ref: "#/components/parameters/MissionId"
+        - $ref: "#/components/parameters/LeaderboardLimit"
+      x-error-codes:
+        - {status: 400, code: 40090, message: invalid leaderboard mission_id}
+        - {status: 500, code: 50090, message: query leaderboard failed}
+      responses:
+        "200":
+          description: 与玩家侧相同的排行榜结果
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaderboardListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AdminUnauthorized"
+        "403":
+          $ref: "#/components/responses/AdminForbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v2/players/search:
+    get:
+      tags: [V2 PVE]
+      operationId: searchV2Players
+      summary: 搜索可交互玩家
+      security: [{PlayerBearer: []}]
+      parameters:
+        - {name: q, in: query, required: true, schema: {type: string, maxLength: 128}}
+      responses: {"200": {description: 玩家搜索结果}, "401": {$ref: "#/components/responses/Unauthorized"}}
+  /api/v2/friends:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2Friends
+      summary: 查询好友
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: 好友列表}}
+  /api/v2/friends/requests:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2FriendRequests
+      summary: 查询好友申请
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: 好友申请列表}}
+  /api/v2/friends/blocks:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2Blocks
+      summary: 查询拉黑对象
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: 拉黑列表}}
+  /api/v2/messages:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2Messages
+      summary: 查询私聊历史
+      security: [{PlayerBearer: []}]
+      parameters:
+        - {name: peer_id, in: query, required: true, schema: {type: integer, format: int64}}
+      responses: {"200": {description: 最近消息}}
+  /api/v2/messages/unread:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2Unread
+      summary: 查询私聊未读
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: 未读统计}}
+  /api/v2/me/activity:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2ActivitySnapshot
+      summary: 查询本人统一活动恢复视图
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: Party/票据/候选/Run/逐人结果和待处理操作的组合视图}}
+  /api/v2/parties/{party_id}:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2Party
+      summary: 查询好友房间
+      security: [{PlayerBearer: []}]
+      parameters: [{name: party_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: Party 快照}}
+  /api/v2/parties/{party_id}/snapshot:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2PartySnapshot
+      summary: 恢复好友房间快照
+      security: [{PlayerBearer: []}]
+      parameters: [{name: party_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: Party 恢复快照}}
+  /api/v2/match/proposals/{proposal_id}:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2Proposal
+      summary: 查询匹配候选
+      security: [{PlayerBearer: []}]
+      parameters: [{name: proposal_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: 候选状态}}
+  /api/v2/runs/{run_id}:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2Run
+      summary: 查询 Run
+      security: [{PlayerBearer: []}]
+      parameters: [{name: run_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: Run 快照}}
+  /api/v2/runs/{run_id}/snapshot:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2RunSnapshot
+      summary: 恢复 Run 快照
+      security: [{PlayerBearer: []}]
+      parameters: [{name: run_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: Run 恢复快照}}
+  /api/v2/runs/{run_id}/results:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2RunResults
+      summary: 查询 Run 结果
+      security: [{PlayerBearer: []}]
+      parameters: [{name: run_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: Run 结果}}
+  /api/v2/operations/{operation_id}:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2Operation
+      summary: 查询幂等操作结果
+      security: [{PlayerBearer: []}]
+      parameters: [{name: operation_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: 操作结果}}
+  /api/v2/recruitment:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2Recruitment
+      summary: 查询临时招募帖
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: 招募帖列表}}
+  /api/v2/recruitment/parties/{party_id}:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2RecruitmentParty
+      summary: 查询本局招募成员准备状态
+      security: [{PlayerBearer: []}]
+      parameters: [{name: party_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: 本人可见的招募任务选择、准备和到期信息}}
+  /api/v2/recruitment/applications:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2RecruitmentApplications
+      summary: 查询本人或自己招募帖的申请
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: 已脱敏的申请状态列表}}
+  /api/v2/operations/catalog:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2OperationCatalog
+      summary: 查询已发布关卡规则目录
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: 关卡、规则版本、共同目标和标签}}
+  /api/v2/operations/preview:
+    get:
+      tags: [V2 PVE]
+      operationId: previewV2TaskCompatibility
+      summary: 预览个人任务兼容性
+      security: [{PlayerBearer: []}]
+      parameters:
+        - {name: rule_version, in: query, required: true, schema: {type: string}}
+        - {name: task_key, in: query, required: false, schema: {type: string}}
+      responses: {"200": {description: 关卡准入、任务兼容原因、机会和结算时点}}
+  /api/v2/operations/recommendations:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2OperationRecommendations
+      summary: 查询本人任务的兼容关卡推荐
+      security: [{PlayerBearer: []}]
+      parameters: [{name: task_key, in: query, required: false, schema: {type: string}}]
+      responses: {"200": {description: 仅基于公开规则和本人选择的有限推荐}}
+  /api/v2/tasks:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2TaskCatalog
+      summary: 查询任务目录
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: 版本化任务规则}}
+  /api/v2/regroup/{proposal_id}:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2RegroupProposal
+      summary: 查询续组同意状态
+      security: [{PlayerBearer: []}]
+      parameters: [{name: proposal_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: 本人参与的续组申请和成员响应}}
+  /api/admin/v2/observations/{entity}:
+    get:
+      tags: [Admin V2 PVE]
+      operationId: getV2Observation
+      summary: 查询 V2 只读观察数据
+      security: [{AdminBearer: []}]
+      parameters: [{name: entity, in: path, required: true, schema: {type: string, enum: [parties, proposals, runs, tasks, pending]}}]
+      responses: {"200": {description: 观察列表}}
+  /api/admin/v2/metrics:
+    get:
+      tags: [Admin V2 PVE]
+      operationId: getV2Metrics
+      summary: Prometheus 兼容业务指标
+      security: [{AdminBearer: []}]
+      responses: {"200": {description: Prometheus metrics}}
+  /api/admin/v2/operations/{operation_id}/retry:
+    post:
+      tags: [Admin V2 PVE]
+      operationId: retryV2SettlementOperation
+      summary: 故障修复后重试已耗尽重试次数的结算
+      description: 实时查询管理员身份，仅 operator 角色可调用。目标必须为 needs_repair 的 settlement 操作、Run 仍 ending 且参与者资产存在。重复修复 operation_id 不重复重置或写审计，不直接发币。
+      security: [{AdminBearer: []}]
+      parameters:
+        - {name: operation_id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operation_id, expected_attempts, reason]
+              properties:
+                operation_id: {type: string, minLength: 8, maxLength: 120, description: 本次修复的稳定意图键}
+                expected_attempts: {type: integer, minimum: 1, description: 查询观察接口所得的原操作尝试次数}
+                reason: {type: string, minLength: 1, maxLength: 512, description: 故障原因与修复说明，服务端限制为512字节}
+      responses:
+        "200": {description: 原操作重新进入 pending，修复回执与审计已持久化}
+        "400": {description: 修复请求无效}
+        "401": {description: 管理员身份无效}
+        "403": {description: 玩家、普通GM或已撤销角色没有修复权限}
+        "404": {description: 目标操作或Run不存在}
+        "409": {description: 状态或尝试版本冲突、故障未消除、同修复键不同内容}
+        "429": {description: 超出入口限流，code 42970}
+        "500": {description: 事务或审计失败，没有提交修复}
+
+components:
+  securitySchemes:
+    PlayerBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 仅接受 `subject_type=player` 且 `player_id>0` 的 HS256 JWT。
+    AdminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 仅接受 `subject_type=admin` 且 `admin_id>0` 的 HS256 JWT。
+
+  headers:
+    RequestId:
+      description: 经校验的请求追踪 ID；非法或缺失时由服务端生成。
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+        pattern: "^[A-Za-z0-9_.-]+$"
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: {type: integer, minimum: 1, default: 1}
+    PageSize:
+      name: page_size
+      in: query
+      description: 非法值回退 10，超过 50 时截断为 50。
+      schema: {type: integer, minimum: 1, maximum: 50, default: 10}
+    Keyword:
+      name: keyword
+      in: query
+      description: 按 username 或 nickname 做 LIKE 查询。
+      schema: {type: string}
+    PlayerId:
+      name: id
+      in: path
+      required: true
+      schema: {type: integer, format: int64, minimum: 1}
+    MissionId:
+      name: mission_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+        pattern: "^[A-Za-z0-9_.-]+$"
+    LeaderboardLimit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 50, default: 10}
+    RecentLogLimit:
+      name: limit
+      in: query
+      description: 非法值回退 10，超过 20 时截断为 20。
+      schema: {type: integer, minimum: 1, maximum: 20, default: 10}
+
+  responses:
+    BadRequest:
+      description: 请求参数或请求体不符合当前业务约束；具体 code 见 operation 的 `x-error-codes`。
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: 登录凭据错误或缺少有效身份。
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: 身份类型不允许或账号被封禁。
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    PlayerUnauthorized:
+      description: 玩家 Authorization 缺失、格式错误或 token 无效（40102/40103/40104）。
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            missing:
+              value: {code: 40102, message: authorization header missing}
+            invalidHeader:
+              value: {code: 40103, message: invalid authorization header}
+            invalidToken:
+              value: {code: 40104, message: invalid token}
+    PlayerForbidden:
+      description: token 不是玩家身份（40301）。
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example: {code: 40301, message: player permission required}
+    AdminUnauthorized:
+      description: 管理员 Authorization 缺失、格式错误或 token 无效（40112/40113/40114）。
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            missing:
+              value: {code: 40112, message: authorization header missing}
+            invalidHeader:
+              value: {code: 40113, message: invalid authorization header}
+            invalidToken:
+              value: {code: 40114, message: invalid token}
+    AdminForbidden:
+      description: token 不是管理员身份（40311）。
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example: {code: 40311, message: admin permission required}
+    NotFound:
+      description: 资源不存在；具体 code 见 operation 的 `x-error-codes`。
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: 唯一性或当前业务状态冲突；具体 code 见 operation 的 `x-error-codes`。
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: 数据源或内部操作失败；具体 code 见 operation 的 `x-error-codes`。
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    PlayerSuccess:
+      description: 玩家数据
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PlayerResponse"
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: integer}
+        message: {type: string}
+        data:
+          description: 仅部分错误返回，例如封禁原因。
+    HealthResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string, const: ok}
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password, nickname]
+      properties:
+        username: {type: string, minLength: 3, maxLength: 64}
+        password: {type: string, minLength: 6, maxLength: 72, writeOnly: true}
+        nickname: {type: string, minLength: 1, maxLength: 64}
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username: {type: string, minLength: 1}
+        password: {type: string, minLength: 1, writeOnly: true}
+    AdminLoginRequest:
+      $ref: "#/components/schemas/LoginRequest"
+    UpdateNicknameRequest:
+      type: object
+      additionalProperties: false
+      required: [nickname]
+      properties:
+        nickname: {type: string, minLength: 1, maxLength: 64}
+    ReasonRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: {type: string, minLength: 1, maxLength: 200}
+    Player:
+      type: object
+      required: [id, username, nickname, status, created_at, updated_at]
+      properties:
+        id: {type: integer, format: int64}
+        username: {type: string}
+        nickname: {type: string}
+        status: {type: string, enum: [normal, banned]}
+        banned_reason: {type: string}
+        banned_at:
+          type: [string, "null"]
+          format: date-time
+        banned_by_admin_id:
+          type: [integer, "null"]
+          format: int64
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    PlayerSummary:
+      type: object
+      required: [id, username, nickname]
+      properties:
+        id: {type: integer, format: int64}
+        username: {type: string}
+        nickname: {type: string}
+    PlayerResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string}
+        data:
+          $ref: "#/components/schemas/Player"
+    PlayerLoginResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string, const: login success}
+        data:
+          type: object
+          required: [token, player]
+          properties:
+            token: {type: string, readOnly: true}
+            player:
+              $ref: "#/components/schemas/PlayerSummary"
+    AdminLoginResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string, const: admin login success}
+        data:
+          type: object
+          required: [token, admin]
+          properties:
+            token: {type: string, readOnly: true}
+            admin:
+              $ref: "#/components/schemas/AdminIdentity"
+    AdminIdentity:
+      type: object
+      required: [id, username, role]
+      properties:
+        id: {type: integer, format: int64}
+        username: {type: string}
+        display_name: {type: string}
+        role: {type: string}
+    AdminIdentityResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string}
+        data:
+          $ref: "#/components/schemas/AdminIdentity"
+    Pagination:
+      type: object
+      required: [page, page_size, total]
+      properties:
+        page: {type: integer, minimum: 1}
+        page_size: {type: integer, minimum: 1, maximum: 50}
+        total: {type: integer, format: int64, minimum: 0}
+    PlayerListResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string}
+        data:
+          allOf:
+            - $ref: "#/components/schemas/Pagination"
+            - type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/Player"
+    OnlineHeartbeatResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string, const: heartbeat success}
+        data:
+          type: object
+          required: [online, ttl_seconds]
+          properties:
+            online: {type: boolean, const: true}
+            ttl_seconds: {type: integer, const: 120}
+    OnlineStatusResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string}
+        data:
+          type: object
+          required: [online]
+          properties:
+            online: {type: boolean}
+    LeaderboardEntry:
+      type: object
+      required: [rank, mission_id, player_id, username, nickname, score, achieved_at, mission_record_id]
+      properties:
+        rank: {type: integer, format: int64, minimum: 1}
+        mission_id: {type: string}
+        player_id: {type: integer, format: int64}
+        username: {type: string}
+        nickname: {type: string}
+        score: {type: integer, format: int64, minimum: 0}
+        achieved_at: {type: string, format: date-time}
+        mission_record_id: {type: integer, format: int64}
+    LeaderboardListResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string}
+        data:
+          type: object
+          required: [mission_id, items]
+          properties:
+            mission_id: {type: string}
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/LeaderboardEntry"
+    LeaderboardEntryResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string}
+        data:
+          $ref: "#/components/schemas/LeaderboardEntry"
+    HistoryItem:
+      type: object
+      required: [mission_record_id, mission_instance_id, mission_id, squad_id, score, completion_seconds, settled_at]
+      properties:
+        mission_record_id: {type: integer, format: int64}
+        mission_instance_id: {type: string}
+        mission_id: {type: string}
+        squad_id: {type: string}
+        score: {type: integer, format: int64}
+        completion_seconds: {type: integer, format: int64}
+        settled_at: {type: string, format: date-time}
+    HistoryPageResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string}
+        data:
+          allOf:
+            - $ref: "#/components/schemas/Pagination"
+            - type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/HistoryItem"
+    DashboardSummaryResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string}
+        data:
+          type: object
+          required: [total_players, normal_players, banned_players, today_new_players, online_players, today_admin_operations]
+          properties:
+            total_players: {type: integer, format: int64, minimum: 0}
+            normal_players: {type: integer, format: int64, minimum: 0}
+            banned_players: {type: integer, format: int64, minimum: 0}
+            today_new_players: {type: integer, format: int64, minimum: 0}
+            online_players: {type: integer, format: int64, minimum: 0}
+            today_admin_operations: {type: integer, format: int64, minimum: 0}
+    AdminOperationLog:
+      type: object
+      required: [id, admin_id, admin_username, admin_role, action, target_type, detail, ip, user_agent, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        admin_id: {type: integer, format: int64}
+        admin_username: {type: string}
+        admin_role: {type: string}
+        action: {type: string}
+        target_type: {type: string}
+        target_id:
+          type: [integer, "null"]
+          format: int64
+        detail: {type: string}
+        ip: {type: string}
+        user_agent: {type: string}
+        created_at: {type: string, format: date-time}
+    RecentOperationLogsResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string}
+        data:
+          type: object
+          required: [items, limit]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/AdminOperationLog"
+            limit: {type: integer, minimum: 1, maximum: 20}
+    OperationLogAction:
+      type: object
+      required: [value, label]
+      properties:
+        value:
+          type: string
+          enum: [admin.players.list, admin.players.detail, admin.players.ban, admin.players.unban]
+        label: {type: string}
+    OperationLogActionsResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string}
+        data:
+          type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/OperationLogAction"
+    OperationLogPageResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string}
+        data:
+          allOf:
+            - $ref: "#/components/schemas/Pagination"
+            - type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/AdminOperationLog"
+    OperationLogResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string}
+        data:
+          $ref: "#/components/schemas/AdminOperationLog"
+    SquadMember:
+      type: object
+      required: [player_id, username, ready, online, joined_at]
+      properties:
+        player_id: {type: integer, format: int64}
+        username: {type: string}
+        ready: {type: boolean}
+        online: {type: boolean}
+        joined_at: {type: string, format: date-time}
+    Squad:
+      type: object
+      required: [id, leader_id, max_members, members, created_at, updated_at]
+      properties:
+        id: {type: string}
+        leader_id: {type: integer, format: int64}
+        max_members: {type: integer, const: 4}
+        members:
+          type: array
+          maxItems: 4
+          items:
+            $ref: "#/components/schemas/SquadMember"
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    SquadStats:
+      type: object
+      required: [squads, members, online_members]
+      properties:
+        squads: {type: integer, minimum: 0}
+        members: {type: integer, minimum: 0}
+        online_members: {type: integer, minimum: 0}
+    MissionInstance:
+      type: object
+      required: [id, mission_id, squad_id, player_ids, status, created_at, updated_at]
+      properties:
+        id: {type: string}
+        mission_id: {type: string}
+        squad_id: {type: string}
+        player_ids:
+          type: array
+          items: {type: integer, format: int64}
+        status: {type: string, enum: [waiting, ready, running, finished, canceled]}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        ready_at: {type: string, format: date-time}
+        started_at: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time}
+    MissionStats:
+      type: object
+      required: [total, waiting, ready, running, finished, canceled]
+      properties:
+        total: {type: integer, minimum: 0}
+        waiting: {type: integer, minimum: 0}
+        ready: {type: integer, minimum: 0}
+        running: {type: integer, minimum: 0}
+        finished: {type: integer, minimum: 0}
+        canceled: {type: integer, minimum: 0}
+    MatchmakingTicket:
+      type: object
+      required: [id, mission_id, player_id, role, status, created_at, updated_at, timeout_at]
+      properties:
+        id: {type: string}
+        mission_id: {type: string}
+        player_id: {type: integer, format: int64}
+        squad_id: {type: string}
+        role: {type: string}
+        status: {type: string, enum: [queued, canceled, timeout]}
+        queue_position: {type: integer, format: int64, minimum: 1}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        timeout_at: {type: string, format: date-time}
+    SettlementItem:
+      type: object
+      required: [id, mission_instance_id, mission_id, squad_id, submitted_by_player_id, submitted_by_username, status, completion_seconds, score, reward_count, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        mission_instance_id: {type: string}
+        mission_id: {type: string}
+        squad_id: {type: string}
+        submitted_by_player_id: {type: integer, format: int64}
+        submitted_by_username: {type: string}
+        status: {type: string, const: settled}
+        completion_seconds: {type: integer, format: int64}
+        score: {type: integer, format: int64}
+        reward_count: {type: integer, format: int64, minimum: 0}
+        created_at: {type: string, format: date-time}
+    RealtimeSummaryResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string}
+        data:
+          type: object
+          required: [online_connections, squads, matchmaking_queued, missions, settlements, observed_at]
+          properties:
+            online_connections: {type: integer, minimum: 0}
+            squads:
+              $ref: "#/components/schemas/SquadStats"
+            matchmaking_queued: {type: integer, format: int64, minimum: 0}
+            missions:
+              $ref: "#/components/schemas/MissionStats"
+            settlements: {type: integer, format: int64, minimum: 0}
+            observed_at: {type: string, format: date-time}
+    PlayerObservationResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string}
+        data:
+          type: object
+          required: [player_id, username, nickname, status, soft_currency, online, matching, observed_at]
+          properties:
+            player_id: {type: integer, format: int64}
+            username: {type: string}
+            nickname: {type: string}
+            status: {type: string, enum: [normal, banned]}
+            soft_currency: {type: integer, format: int64}
+            online: {type: boolean}
+            squad:
+              $ref: "#/components/schemas/Squad"
+            mission:
+              $ref: "#/components/schemas/MissionInstance"
+            matching: {type: boolean}
+            matchmaking:
+              $ref: "#/components/schemas/MatchmakingTicket"
+            latest_settlement:
+              $ref: "#/components/schemas/SettlementItem"
+            observed_at: {type: string, format: date-time}
+    SettlementPageResponse:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: integer, const: 0}
+        message: {type: string}
+        data:
+          allOf:
+            - $ref: "#/components/schemas/Pagination"
+            - type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/SettlementItem"
