@@ -2,33 +2,52 @@ package database
 
 import (
 	"context"
-	"fmt"
+	"database/sql"
+	"time"
 
 	"game-realtime-gm/backend/internal/config"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/go-sql-driver/mysql"
 )
 
-func NewPostgresPool(ctx context.Context, cfg config.DatabaseConfig) (*pgxpool.Pool, error) {
-	dsn := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Host,
-		cfg.Port,
-		cfg.User,
-		cfg.Password,
-		cfg.Name,
-		cfg.SSLMode,
-	)
-
-	pool, err := pgxpool.New(ctx, dsn)
+func NewMySQLDB(ctx context.Context, cfg config.DatabaseConfig) (*sql.DB, error) {
+	location, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
 		return nil, err
 	}
+	driverConfig := mysql.NewConfig()
+	driverConfig.User = cfg.User
+	driverConfig.Passwd = cfg.Password
+	driverConfig.Net = "tcp"
+	driverConfig.Addr = cfg.Host + ":" + cfg.Port
+	driverConfig.DBName = cfg.Name
+	driverConfig.ParseTime = true
+	driverConfig.Loc = location
+	driverConfig.Collation = "utf8mb4_0900_ai_ci"
+	driverConfig.Params = map[string]string{"charset": "utf8mb4"}
+	if cfg.UTC {
+		driverConfig.Loc = time.UTC
+		driverConfig.Params["time_zone"] = "'+00:00'"
+	}
+	driverConfig.Timeout = 5 * time.Second
+	driverConfig.ReadTimeout = 10 * time.Second
+	driverConfig.WriteTimeout = 10 * time.Second
+	dsn := driverConfig.FormatDSN()
 
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(20)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
 		return nil, err
 	}
 
-	return pool, nil
+	return db, nil
 }

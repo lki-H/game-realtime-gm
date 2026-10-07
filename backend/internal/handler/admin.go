@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"database/sql"
 	"errors"
 	"log"
 	"net/http"
@@ -12,14 +13,13 @@ import (
 	"game-realtime-gm/backend/internal/model"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
 
 type AdminHandler struct {
-	db          *pgxpool.Pool
+	db          *sql.DB
 	redisClient *redis.Client
+	Versioned   bool
 }
 
 type banPlayerRequest struct {
@@ -54,7 +54,7 @@ var operationLogActionOptions = []operationLogActionOption{
 	},
 }
 
-func NewAdminHandler(db *pgxpool.Pool, redisClient *redis.Client) *AdminHandler {
+func NewAdminHandler(db *sql.DB, redisClient *redis.Client) *AdminHandler {
 	return &AdminHandler{
 		db:          db,
 		redisClient: redisClient,
@@ -88,7 +88,7 @@ func (h *AdminHandler) DashboardSummary(c *gin.Context) {
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
 
 	var totalPlayers int64
-	if err := h.db.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM players`).Scan(&totalPlayers); err != nil {
+	if err := h.db.QueryRowContext(c.Request.Context(), `SELECT COUNT(*) FROM players`).Scan(&totalPlayers); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50091,
 			"message": "count total players failed",
@@ -97,7 +97,7 @@ func (h *AdminHandler) DashboardSummary(c *gin.Context) {
 	}
 
 	var normalPlayers int64
-	if err := h.db.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM players WHERE status = $1`, "normal").Scan(&normalPlayers); err != nil {
+	if err := h.db.QueryRowContext(c.Request.Context(), `SELECT COUNT(*) FROM players WHERE status = ?`, "normal").Scan(&normalPlayers); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50092,
 			"message": "count normal players failed",
@@ -106,7 +106,7 @@ func (h *AdminHandler) DashboardSummary(c *gin.Context) {
 	}
 
 	var bannedPlayers int64
-	if err := h.db.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM players WHERE status = $1`, "banned").Scan(&bannedPlayers); err != nil {
+	if err := h.db.QueryRowContext(c.Request.Context(), `SELECT COUNT(*) FROM players WHERE status = ?`, "banned").Scan(&bannedPlayers); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50093,
 			"message": "count banned players failed",
@@ -115,7 +115,7 @@ func (h *AdminHandler) DashboardSummary(c *gin.Context) {
 	}
 
 	var todayNewPlayers int64
-	if err := h.db.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM players WHERE created_at >= $1`, todayStart).Scan(&todayNewPlayers); err != nil {
+	if err := h.db.QueryRowContext(c.Request.Context(), `SELECT COUNT(*) FROM players WHERE created_at >= ?`, todayStart).Scan(&todayNewPlayers); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50094,
 			"message": "count today new players failed",
@@ -133,7 +133,7 @@ func (h *AdminHandler) DashboardSummary(c *gin.Context) {
 	}
 
 	var todayAdminOperations int64
-	if err := h.db.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM admin_operation_logs WHERE created_at >= $1`, todayStart).Scan(&todayAdminOperations); err != nil {
+	if err := h.db.QueryRowContext(c.Request.Context(), `SELECT COUNT(*) FROM admin_operation_logs WHERE created_at >= ?`, todayStart).Scan(&todayAdminOperations); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50096,
 			"message": "count today admin operations failed",
@@ -161,12 +161,12 @@ func (h *AdminHandler) RecentOperationLogs(c *gin.Context) {
 		limit = 20
 	}
 
-	rows, err := h.db.Query(
+	rows, err := h.db.QueryContext(
 		c.Request.Context(),
 		`SELECT id, admin_id, admin_username, admin_role, action, target_type, target_id, detail, ip, user_agent, created_at
          FROM admin_operation_logs
          ORDER BY id DESC
-         LIMIT $1`,
+		 LIMIT ?`,
 		int32(limit),
 	)
 	if err != nil {
@@ -252,7 +252,7 @@ func (h *AdminHandler) recordOperation(c *gin.Context, action string, targetType
 		targetValue = *targetID
 	}
 
-	_, err := h.db.Exec(
+	_, err := h.db.ExecContext(
 		c.Request.Context(),
 		`INSERT INTO admin_operation_logs (
             admin_id,
@@ -264,7 +264,7 @@ func (h *AdminHandler) recordOperation(c *gin.Context, action string, targetType
             detail,
             ip,
             user_agent
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		adminID,
 		middleware.CurrentAdminUsername(c),
 		middleware.CurrentAdminRole(c),
@@ -280,7 +280,7 @@ func (h *AdminHandler) recordOperation(c *gin.Context, action string, targetType
 	}
 }
 
-func (h *AdminHandler) recordOperationTx(c *gin.Context, tx pgx.Tx, action string, targetType string, targetID *int64, detail string) error {
+func (h *AdminHandler) recordOperationTx(c *gin.Context, tx *sql.Tx, action string, targetType string, targetID *int64, detail string) error {
 	adminID, ok := middleware.CurrentAdminID(c)
 	if !ok {
 		return nil
@@ -291,7 +291,7 @@ func (h *AdminHandler) recordOperationTx(c *gin.Context, tx pgx.Tx, action strin
 		targetValue = *targetID
 	}
 
-	_, err := tx.Exec(
+	_, err := tx.ExecContext(
 		c.Request.Context(),
 		`INSERT INTO admin_operation_logs (
             admin_id,
@@ -303,7 +303,7 @@ func (h *AdminHandler) recordOperationTx(c *gin.Context, tx pgx.Tx, action strin
             detail,
             ip,
             user_agent
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		adminID,
 		middleware.CurrentAdminUsername(c),
 		middleware.CurrentAdminRole(c),
@@ -330,13 +330,14 @@ func (h *AdminHandler) ListPlayers(c *gin.Context) {
 	whereSQL := ""
 	args := []any{}
 	if keyword != "" {
-		whereSQL = "WHERE username ILIKE $1 OR nickname ILIKE $1"
-		args = append(args, "%"+keyword+"%")
+		whereSQL = "WHERE username LIKE ? OR nickname LIKE ?"
+		keywordPattern := "%" + keyword + "%"
+		args = append(args, keywordPattern, keywordPattern)
 	}
 
 	var total int64
 	countSQL := `SELECT COUNT(*) FROM players ` + whereSQL
-	if err := h.db.QueryRow(c.Request.Context(), countSQL, args...).Scan(&total); err != nil {
+	if err := h.db.QueryRowContext(c.Request.Context(), countSQL, args...).Scan(&total); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50041,
 			"message": "count players failed",
@@ -344,17 +345,15 @@ func (h *AdminHandler) ListPlayers(c *gin.Context) {
 		return
 	}
 
-	listArgs := append(args, int32(pageSize), int32(offset))
-	limitIndex := len(args) + 1
-	offsetIndex := len(args) + 2
+	listArgs := append(append([]any{}, args...), pageSize, offset)
 
-	rows, err := h.db.Query(
+	rows, err := h.db.QueryContext(
 		c.Request.Context(),
 		`SELECT id, username, nickname, created_at, updated_at, status, banned_reason, banned_at, banned_by_admin_id
          FROM players
          `+whereSQL+`
          ORDER BY id DESC
-         LIMIT $`+strconv.Itoa(limitIndex)+` OFFSET $`+strconv.Itoa(offsetIndex),
+		 LIMIT ? OFFSET ?`,
 		listArgs...,
 	)
 	if err != nil {
@@ -425,11 +424,11 @@ func (h *AdminHandler) GetPlayerByID(c *gin.Context) {
 	}
 
 	var player model.Player
-	err = h.db.QueryRow(
+	err = h.db.QueryRowContext(
 		c.Request.Context(),
 		`SELECT id, username, nickname, created_at, updated_at, status, banned_reason, banned_at, banned_by_admin_id
          FROM players
-         WHERE id = $1`,
+         WHERE id = ?`,
 		playerID,
 	).Scan(
 		&player.ID,
@@ -442,7 +441,7 @@ func (h *AdminHandler) GetPlayerByID(c *gin.Context) {
 		&player.BannedAt,
 		&player.BannedByAdminID,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"code":    40441,
 			"message": "player not found",
@@ -510,7 +509,7 @@ func (h *AdminHandler) BanPlayer(c *gin.Context) {
 		return
 	}
 
-	tx, err := h.db.Begin(c.Request.Context())
+	tx, err := h.db.BeginTx(c.Request.Context(), nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50051,
@@ -518,15 +517,15 @@ func (h *AdminHandler) BanPlayer(c *gin.Context) {
 		})
 		return
 	}
-	defer tx.Rollback(c.Request.Context())
+	defer tx.Rollback()
 
 	var currentStatus string
-	err = tx.QueryRow(
+	err = tx.QueryRowContext(
 		c.Request.Context(),
-		`SELECT status FROM players WHERE id = $1`,
+		`SELECT status FROM players WHERE id = ? FOR UPDATE`,
 		playerID,
 	).Scan(&currentStatus)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"code":    40451,
 			"message": "player not found",
@@ -550,18 +549,31 @@ func (h *AdminHandler) BanPlayer(c *gin.Context) {
 	}
 
 	var player model.Player
-	err = tx.QueryRow(
+	_, err = tx.ExecContext(
 		c.Request.Context(),
 		`UPDATE players
          SET status = 'banned',
-             banned_reason = $1,
+             banned_reason = ?,
              banned_at = NOW(),
-             banned_by_admin_id = $2,
+             banned_by_admin_id = ?,
              updated_at = NOW()
-         WHERE id = $3
-         RETURNING id, username, nickname, created_at, updated_at, status, banned_reason, banned_at, banned_by_admin_id`,
+         WHERE id = ?`,
 		reason,
 		adminID,
+		playerID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50053,
+			"message": "ban player failed",
+		})
+		return
+	}
+	err = tx.QueryRowContext(
+		c.Request.Context(),
+		`SELECT id, username, nickname, created_at, updated_at, status, banned_reason, banned_at, banned_by_admin_id
+         FROM players
+         WHERE id = ?`,
 		playerID,
 	).Scan(
 		&player.ID,
@@ -582,6 +594,12 @@ func (h *AdminHandler) BanPlayer(c *gin.Context) {
 		return
 	}
 
+	if h.Versioned {
+		if _, err := tx.ExecContext(c.Request.Context(), "INSERT INTO pve_session_revocations(player_id,revoked_through) VALUES(?,UTC_TIMESTAMP(3)) ON DUPLICATE KEY UPDATE revoked_through=UTC_TIMESTAMP(3)", playerID); err != nil {
+			c.JSON(500, gin.H{"code": 50055, "message": "revoke session failed"})
+			return
+		}
+	}
 	if err := h.recordOperationTx(c, tx, "admin.players.ban", "player", &playerID, "reason="+reason); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50054,
@@ -590,7 +608,7 @@ func (h *AdminHandler) BanPlayer(c *gin.Context) {
 		return
 	}
 
-	if err := tx.Commit(c.Request.Context()); err != nil {
+	if err := tx.Commit(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50055,
 			"message": "commit transaction failed",
@@ -640,7 +658,7 @@ func (h *AdminHandler) UnbanPlayer(c *gin.Context) {
 		return
 	}
 
-	tx, err := h.db.Begin(c.Request.Context())
+	tx, err := h.db.BeginTx(c.Request.Context(), nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50061,
@@ -648,15 +666,15 @@ func (h *AdminHandler) UnbanPlayer(c *gin.Context) {
 		})
 		return
 	}
-	defer tx.Rollback(c.Request.Context())
+	defer tx.Rollback()
 
 	var currentStatus string
-	err = tx.QueryRow(
+	err = tx.QueryRowContext(
 		c.Request.Context(),
-		`SELECT status FROM players WHERE id = $1`,
+		`SELECT status FROM players WHERE id = ? FOR UPDATE`,
 		playerID,
 	).Scan(&currentStatus)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"code":    40461,
 			"message": "player not found",
@@ -680,7 +698,7 @@ func (h *AdminHandler) UnbanPlayer(c *gin.Context) {
 	}
 
 	var player model.Player
-	err = tx.QueryRow(
+	_, err = tx.ExecContext(
 		c.Request.Context(),
 		`UPDATE players
          SET status = 'normal',
@@ -688,8 +706,21 @@ func (h *AdminHandler) UnbanPlayer(c *gin.Context) {
              banned_at = NULL,
              banned_by_admin_id = NULL,
              updated_at = NOW()
-         WHERE id = $1
-         RETURNING id, username, nickname, created_at, updated_at, status, banned_reason, banned_at, banned_by_admin_id`,
+         WHERE id = ?`,
+		playerID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50063,
+			"message": "unban player failed",
+		})
+		return
+	}
+	err = tx.QueryRowContext(
+		c.Request.Context(),
+		`SELECT id, username, nickname, created_at, updated_at, status, banned_reason, banned_at, banned_by_admin_id
+         FROM players
+         WHERE id = ?`,
 		playerID,
 	).Scan(
 		&player.ID,
@@ -718,7 +749,7 @@ func (h *AdminHandler) UnbanPlayer(c *gin.Context) {
 		return
 	}
 
-	if err := tx.Commit(c.Request.Context()); err != nil {
+	if err := tx.Commit(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50065,
 			"message": "commit transaction failed",
@@ -764,15 +795,15 @@ func (h *AdminHandler) ListOperationLogs(c *gin.Context) {
 
 	if action != "" {
 		args = append(args, action)
-		whereParts = append(whereParts, "action = $"+strconv.Itoa(len(args)))
+		whereParts = append(whereParts, "action = ?")
 	}
 	if adminUsername != "" {
 		args = append(args, adminUsername)
-		whereParts = append(whereParts, "admin_username = $"+strconv.Itoa(len(args)))
+		whereParts = append(whereParts, "admin_username = ?")
 	}
 	if targetType != "" {
 		args = append(args, targetType)
-		whereParts = append(whereParts, "target_type = $"+strconv.Itoa(len(args)))
+		whereParts = append(whereParts, "target_type = ?")
 	}
 	if targetIDText != "" {
 		targetID, err := strconv.ParseInt(targetIDText, 10, 64)
@@ -784,7 +815,7 @@ func (h *AdminHandler) ListOperationLogs(c *gin.Context) {
 			return
 		}
 		args = append(args, targetID)
-		whereParts = append(whereParts, "target_id = $"+strconv.Itoa(len(args)))
+		whereParts = append(whereParts, "target_id = ?")
 	}
 
 	var startTime time.Time
@@ -814,10 +845,10 @@ func (h *AdminHandler) ListOperationLogs(c *gin.Context) {
 		}
 
 		args = append(args, startTime)
-		whereParts = append(whereParts, "created_at >= $"+strconv.Itoa(len(args)))
+		whereParts = append(whereParts, "created_at >= ?")
 
 		args = append(args, endTime)
-		whereParts = append(whereParts, "created_at <= $"+strconv.Itoa(len(args)))
+		whereParts = append(whereParts, "created_at <= ?")
 	}
 
 	if startTimeText != "" {
@@ -831,7 +862,7 @@ func (h *AdminHandler) ListOperationLogs(c *gin.Context) {
 		}
 		startTime = parsedStartTime
 		args = append(args, startTime)
-		whereParts = append(whereParts, "created_at >= $"+strconv.Itoa(len(args)))
+		whereParts = append(whereParts, "created_at >= ?")
 	}
 
 	if endTimeText != "" {
@@ -845,7 +876,7 @@ func (h *AdminHandler) ListOperationLogs(c *gin.Context) {
 		}
 		endTime = parsedEndTime
 		args = append(args, endTime)
-		whereParts = append(whereParts, "created_at <= $"+strconv.Itoa(len(args)))
+		whereParts = append(whereParts, "created_at <= ?")
 	}
 
 	if !startTime.IsZero() && !endTime.IsZero() && startTime.After(endTime) {
@@ -863,7 +894,7 @@ func (h *AdminHandler) ListOperationLogs(c *gin.Context) {
 
 	var total int64
 	countSQL := `SELECT COUNT(*) FROM admin_operation_logs ` + whereSQL
-	if err := h.db.QueryRow(c.Request.Context(), countSQL, args...).Scan(&total); err != nil {
+	if err := h.db.QueryRowContext(c.Request.Context(), countSQL, args...).Scan(&total); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50071,
 			"message": "count operation logs failed",
@@ -871,17 +902,15 @@ func (h *AdminHandler) ListOperationLogs(c *gin.Context) {
 		return
 	}
 
-	listArgs := append(args, int32(pageSize), int32(offset))
-	limitIndex := len(args) + 1
-	offsetIndex := len(args) + 2
+	listArgs := append(append([]any{}, args...), pageSize, offset)
 
-	rows, err := h.db.Query(
+	rows, err := h.db.QueryContext(
 		c.Request.Context(),
 		`SELECT id, admin_id, admin_username, admin_role, action, target_type, target_id, detail, ip, user_agent, created_at
          FROM admin_operation_logs
          `+whereSQL+`
          ORDER BY id DESC
-         LIMIT $`+strconv.Itoa(limitIndex)+` OFFSET $`+strconv.Itoa(offsetIndex),
+         LIMIT ? OFFSET ?`,
 		listArgs...,
 	)
 	if err != nil {
@@ -949,11 +978,11 @@ func (h *AdminHandler) GetOperationLogByID(c *gin.Context) {
 	}
 
 	var operationLog model.AdminOperationLog
-	err = h.db.QueryRow(
+	err = h.db.QueryRowContext(
 		c.Request.Context(),
 		`SELECT id, admin_id, admin_username, admin_role, action, target_type, target_id, detail, ip, user_agent, created_at
          FROM admin_operation_logs
-         WHERE id = $1`,
+         WHERE id = ?`,
 		logID,
 	).Scan(
 		&operationLog.ID,
@@ -968,7 +997,7 @@ func (h *AdminHandler) GetOperationLogByID(c *gin.Context) {
 		&operationLog.UserAgent,
 		&operationLog.CreatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"code":    40481,
 			"message": "operation log not found",

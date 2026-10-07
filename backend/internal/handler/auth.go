@@ -1,24 +1,26 @@
 package handler
 
 import (
+	"database/sql"
 	"errors"
 	"net/http"
 
 	tokenauth "game-realtime-gm/backend/internal/auth"
 	"game-realtime-gm/backend/internal/model"
+	"game-realtime-gm/backend/internal/pve"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/go-sql-driver/mysql"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type AuthHandler struct {
-	db        *pgxpool.Pool
+	db        *sql.DB
 	jwtSecret string
+	Versioned bool
 }
 
-func NewAuthHandler(db *pgxpool.Pool, jwtSecret string) *AuthHandler {
+func NewAuthHandler(db *sql.DB, jwtSecret string) *AuthHandler {
 	return &AuthHandler{
 		db:        db,
 		jwtSecret: jwtSecret,
@@ -55,16 +57,69 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	var player model.Player
-	err = h.db.QueryRow(
+	tx, err := h.db.BeginTx(c.Request.Context(), nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50002,
+			"message": "create player failed",
+		})
+		return
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(
 		c.Request.Context(),
-		`INSERT INTO players (username, password_hash, nickname)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (username) DO NOTHING
-         RETURNING id, username, nickname, created_at, updated_at, status, banned_reason, banned_at, banned_by_admin_id`,
+		`INSERT INTO players (username, password_hash, nickname, banned_reason)
+         VALUES (?, ?, ?, '')`,
 		req.Username,
 		string(passwordHash),
 		req.Nickname,
+	)
+	if err != nil {
+		var mysqlErr *mysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+			c.JSON(http.StatusConflict, gin.H{
+				"code":    40901,
+				"message": "username already exists",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50002,
+			"message": "create player failed",
+		})
+		return
+	}
+
+	playerID, err := result.LastInsertId()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50002,
+			"message": "create player failed",
+		})
+		return
+	}
+
+	if _, err := tx.ExecContext(
+		c.Request.Context(),
+		`INSERT INTO player_assets (player_id, soft_currency)
+         VALUES (?, 0)`,
+		playerID,
+	); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50002,
+			"message": "create player failed",
+		})
+		return
+	}
+
+	var player model.Player
+	err = tx.QueryRowContext(
+		c.Request.Context(),
+		`SELECT id, username, nickname, created_at, updated_at, status, banned_reason, banned_at, banned_by_admin_id
+         FROM players
+         WHERE id = ?`,
+		playerID,
 	).Scan(
 		&player.ID,
 		&player.Username,
@@ -76,14 +131,15 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		&player.BannedAt,
 		&player.BannedByAdminID,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		c.JSON(http.StatusConflict, gin.H{
-			"code":    40901,
-			"message": "username already exists",
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50002,
+			"message": "create player failed",
 		})
 		return
 	}
-	if err != nil {
+
+	if err := tx.Commit(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50002,
 			"message": "create player failed",
@@ -109,11 +165,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	var player model.Player
-	err := h.db.QueryRow(
+	err := h.db.QueryRowContext(
 		c.Request.Context(),
 		`SELECT id, username, password_hash, nickname, created_at, updated_at, status, banned_reason, banned_at, banned_by_admin_id
 		FROM players
-		WHERE username = $1`,
+		WHERE username = ?`,
 		req.Username,
 	).Scan(
 		&player.ID,
@@ -127,7 +183,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		&player.BannedAt,
 		&player.BannedByAdminID,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"code":    40101,
 			"message": "username or password is wrong",
@@ -161,7 +217,15 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	token, err := tokenauth.GenerateToken(h.jwtSecret, player.ID, player.Username)
+	var version int64
+	if h.Versioned {
+		version, err = pve.SessionVersion(c.Request.Context(), h.db, player.ID)
+		if err != nil {
+			c.JSON(500, gin.H{"code": 50004, "message": "query session failed"})
+			return
+		}
+	}
+	token, err := tokenauth.GenerateVersionedToken(h.jwtSecret, player.ID, player.Username, version)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50004,

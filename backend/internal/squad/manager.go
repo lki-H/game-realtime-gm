@@ -20,6 +20,7 @@ type Member struct {
 	PlayerID int64     `json:"player_id"`
 	Username string    `json:"username"`
 	Ready    bool      `json:"ready"`
+	Online   bool      `json:"online"`
 	JoinedAt time.Time `json:"joined_at"`
 }
 
@@ -30,6 +31,12 @@ type Squad struct {
 	Members    []Member  `json:"members"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type Stats struct {
+	Squads        int `json:"squads"`
+	Members       int `json:"members"`
+	OnlineMembers int `json:"online_members"`
 }
 
 type Manager struct {
@@ -68,6 +75,7 @@ func (m *Manager) Create(playerID int64, username string) (*Squad, error) {
 				PlayerID: playerID,
 				Username: username,
 				Ready:    true,
+				Online:   true,
 				JoinedAt: now,
 			},
 		},
@@ -103,6 +111,7 @@ func (m *Manager) Join(squadID string, playerID int64, username string) (*Squad,
 		PlayerID: playerID,
 		Username: username,
 		Ready:    false,
+		Online:   true,
 		JoinedAt: now,
 	})
 	s.UpdatedAt = now
@@ -141,10 +150,18 @@ func (m *Manager) Leave(playerID int64) (*Squad, bool, error) {
 	}
 
 	s.Members = nextMembers
-	if s.LeaderID == playerID {
-		s.LeaderID = nextMembers[0].PlayerID
-	}
 	s.UpdatedAt = time.Now()
+
+	if s.LeaderID == playerID {
+		newLeaderID := nextMembers[0].PlayerID
+		for _, member := range nextMembers {
+			if member.Online {
+				newLeaderID = member.PlayerID
+				break
+			}
+		}
+		s.LeaderID = newLeaderID
+	}
 
 	return cloneSquad(s), false, nil
 }
@@ -176,6 +193,22 @@ func (m *Manager) SetReady(playerID int64, ready bool) (*Squad, error) {
 	return nil, ErrPlayerNotInSquad
 }
 
+func (m *Manager) Stats() Stats {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	stats := Stats{Squads: len(m.squads)}
+	for _, currentSquad := range m.squads {
+		stats.Members += len(currentSquad.Members)
+		for _, member := range currentSquad.Members {
+			if member.Online {
+				stats.OnlineMembers++
+			}
+		}
+	}
+	return stats
+}
+
 func (m *Manager) GetByPlayer(playerID int64) (*Squad, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -191,6 +224,84 @@ func (m *Manager) GetByPlayer(playerID int64) (*Squad, error) {
 	}
 
 	return cloneSquad(s), nil
+}
+
+func (m *Manager) HandleReconnect(playerID int64) (*Squad, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	squadID, exists := m.playerSquad[playerID]
+	if !exists {
+		return nil, false, ErrPlayerNotInSquad
+	}
+	s, exists := m.squads[squadID]
+	if !exists {
+		delete(m.playerSquad, playerID)
+		return nil, false, ErrSquadNotFound
+	}
+
+	for index := range s.Members {
+		if s.Members[index].PlayerID != playerID {
+			continue
+		}
+		if s.Members[index].Online {
+			return cloneSquad(s), false, nil
+		}
+
+		s.Members[index].Online = true
+		s.UpdatedAt = time.Now()
+		return cloneSquad(s), true, nil
+	}
+
+	delete(m.playerSquad, playerID)
+	return nil, false, ErrPlayerNotInSquad
+}
+
+func (m *Manager) HandleDisconnect(playerID int64) (*Squad, bool, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	squadID, exists := m.playerSquad[playerID]
+	if !exists {
+		return nil, false, false, ErrPlayerNotInSquad
+	}
+	s, exists := m.squads[squadID]
+	if !exists {
+		delete(m.playerSquad, playerID)
+		return nil, false, false, ErrSquadNotFound
+	}
+
+	memberIndex := -1
+	for index := range s.Members {
+		if s.Members[index].PlayerID == playerID {
+			memberIndex = index
+			break
+		}
+	}
+	if memberIndex < 0 {
+		delete(m.playerSquad, playerID)
+		return nil, false, false, ErrPlayerNotInSquad
+	}
+	if !s.Members[memberIndex].Online {
+		return cloneSquad(s), false, false, nil
+	}
+
+	s.Members[memberIndex].Online = false
+	s.Members[memberIndex].Ready = false
+	leaderChanged := false
+
+	if s.LeaderID == playerID {
+		for _, member := range s.Members {
+			if member.PlayerID != playerID && member.Online {
+				s.LeaderID = member.PlayerID
+				leaderChanged = true
+				break
+			}
+		}
+	}
+
+	s.UpdatedAt = time.Now()
+	return cloneSquad(s), true, leaderChanged, nil
 }
 
 func cloneSquad(s *Squad) *Squad {

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"database/sql"
 	"errors"
 	"net/http"
 	"strconv"
@@ -10,19 +11,17 @@ import (
 	"game-realtime-gm/backend/internal/model"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type PlayerHandler struct {
-	db *pgxpool.Pool
+	db *sql.DB
 }
 
 type updateNicknameRequest struct {
 	Nickname string `json:"nickname" binding:"required,max=64"`
 }
 
-func NewPlayerHandler(db *pgxpool.Pool) *PlayerHandler {
+func NewPlayerHandler(db *sql.DB) *PlayerHandler {
 	return &PlayerHandler{db: db}
 }
 
@@ -33,7 +32,7 @@ func (h *PlayerHandler) Me(c *gin.Context) {
 	}
 
 	player, err := h.findPlayerByID(c, playerID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"code":    40401,
 			"message": "player not found",
@@ -79,27 +78,24 @@ func (h *PlayerHandler) UpdateNickname(c *gin.Context) {
 		return
 	}
 
-	var player model.Player
-	err := h.db.QueryRow(
+	_, err := h.db.ExecContext(
 		c.Request.Context(),
 		`UPDATE players
-         SET nickname = $1, updated_at = NOW()
-         WHERE id = $2
-         RETURNING id, username, nickname, created_at, updated_at, status, banned_reason, banned_at, banned_by_admin_id`,
+         SET nickname = ?, updated_at = CURRENT_TIMESTAMP(3)
+         WHERE id = ?`,
 		nickname,
 		playerID,
-	).Scan(
-		&player.ID,
-		&player.Username,
-		&player.Nickname,
-		&player.CreatedAt,
-		&player.UpdatedAt,
-		&player.Status,
-		&player.BannedReason,
-		&player.BannedAt,
-		&player.BannedByAdminID,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    50011,
+			"message": "update nickname failed",
+		})
+		return
+	}
+
+	player, err := h.findPlayerByID(c, playerID)
+	if errors.Is(err, sql.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"code":    40401,
 			"message": "player not found",
@@ -132,7 +128,7 @@ func (h *PlayerHandler) GetByID(c *gin.Context) {
 	}
 
 	player, err := h.findPlayerByID(c, playerID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"code":    40401,
 			"message": "player not found",
@@ -167,13 +163,14 @@ func (h *PlayerHandler) List(c *gin.Context) {
 	whereSQL := ""
 	args := []any{}
 	if keyword != "" {
-		whereSQL = "WHERE username ILIKE $1 OR nickname ILIKE $1"
-		args = append(args, "%"+keyword+"%")
+		whereSQL = "WHERE username LIKE ? OR nickname LIKE ?"
+		keywordPattern := "%" + keyword + "%"
+		args = append(args, keywordPattern, keywordPattern)
 	}
 
 	var total int64
 	countSQL := `SELECT COUNT(*) FROM players ` + whereSQL
-	if err := h.db.QueryRow(c.Request.Context(), countSQL, args...).Scan(&total); err != nil {
+	if err := h.db.QueryRowContext(c.Request.Context(), countSQL, args...).Scan(&total); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50013,
 			"message": "count players failed",
@@ -181,17 +178,15 @@ func (h *PlayerHandler) List(c *gin.Context) {
 		return
 	}
 
-	listArgs := append(args, int32(pageSize), int32(offset))
-	limitIndex := len(args) + 1
-	offsetIndex := len(args) + 2
+	listArgs := append(append([]any{}, args...), pageSize, offset)
 
-	rows, err := h.db.Query(
+	rows, err := h.db.QueryContext(
 		c.Request.Context(),
 		`SELECT id, username, nickname, created_at, updated_at, status, banned_reason, banned_at, banned_by_admin_id
          FROM players
          `+whereSQL+`
          ORDER BY id DESC
-         LIMIT $`+strconv.Itoa(limitIndex)+` OFFSET $`+strconv.Itoa(offsetIndex),
+		 LIMIT ? OFFSET ?`,
 		listArgs...,
 	)
 	if err != nil {
@@ -248,11 +243,11 @@ func (h *PlayerHandler) List(c *gin.Context) {
 
 func (h *PlayerHandler) findPlayerByID(c *gin.Context, playerID int64) (model.Player, error) {
 	var player model.Player
-	err := h.db.QueryRow(
+	err := h.db.QueryRowContext(
 		c.Request.Context(),
 		`SELECT id, username, nickname, created_at, updated_at, status, banned_reason, banned_at, banned_by_admin_id
          FROM players
-         WHERE id = $1`,
+		 WHERE id = ?`,
 		playerID,
 	).Scan(
 		&player.ID,

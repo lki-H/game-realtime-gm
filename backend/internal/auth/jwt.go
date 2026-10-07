@@ -14,19 +14,25 @@ const (
 )
 
 type Claims struct {
-	SubjectType string `json:"subject_type"`
-	PlayerID    int64  `json:"player_id,omitempty"`
-	AdminID     int64  `json:"admin_id,omitempty"`
-	Username    string `json:"username"`
-	Role        string `json:"role,omitempty"`
+	SubjectType    string `json:"subject_type"`
+	PlayerID       int64  `json:"player_id,omitempty"`
+	AdminID        int64  `json:"admin_id,omitempty"`
+	Username       string `json:"username"`
+	Role           string `json:"role,omitempty"`
+	SessionVersion int64  `json:"session_version,omitempty"`
 	jwt.RegisteredClaims
 }
 
 func GenerateToken(secret string, playerID int64, username string) (string, error) {
+	return GenerateVersionedToken(secret, playerID, username, 0)
+}
+
+func GenerateVersionedToken(secret string, playerID int64, username string, version int64) (string, error) {
 	claims := Claims{
-		SubjectType: SubjectTypePlayer,
-		PlayerID:    playerID,
-		Username:    username,
+		SubjectType:    SubjectTypePlayer,
+		PlayerID:       playerID,
+		Username:       username,
+		SessionVersion: version,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   strconv.FormatInt(playerID, 10),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -57,7 +63,7 @@ func GenerateAdminToken(secret string, adminID int64, username string, role stri
 
 func ParseToken(secret string, tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+		if token.Method != jwt.SigningMethodHS256 {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return []byte(secret), nil

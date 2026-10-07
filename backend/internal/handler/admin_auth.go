@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"database/sql"
 	"errors"
 	"net/http"
 
@@ -8,17 +9,15 @@ import (
 	"game-realtime-gm/backend/internal/model"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type AdminAuthHandler struct {
-	db        *pgxpool.Pool
+	db        *sql.DB
 	jwtSecret string
 }
 
-func NewAdminAuthHandler(db *pgxpool.Pool, jwtSecret string) *AdminAuthHandler {
+func NewAdminAuthHandler(db *sql.DB, jwtSecret string) *AdminAuthHandler {
 	return &AdminAuthHandler{
 		db:        db,
 		jwtSecret: jwtSecret,
@@ -41,11 +40,11 @@ func (h *AdminAuthHandler) Login(c *gin.Context) {
 	}
 
 	var admin model.Admin
-	err := h.db.QueryRow(
+	err := h.db.QueryRowContext(
 		c.Request.Context(),
 		`SELECT id, username, password_hash, display_name, role, created_at, updated_at
          FROM admins
-         WHERE username = $1`,
+		 WHERE username = ?`,
 		req.Username,
 	).Scan(
 		&admin.ID,
@@ -56,7 +55,7 @@ func (h *AdminAuthHandler) Login(c *gin.Context) {
 		&admin.CreatedAt,
 		&admin.UpdatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"code":    40111,
 			"message": "username or password is wrong",
