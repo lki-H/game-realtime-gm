@@ -24,8 +24,8 @@ jobs:
         run: |
           export PVE_TEST_PASSWORD="$(openssl rand -hex 32)"
           export PVE_INTEGRATION=1 GIN_MODE=release
-          trap 'docker compose -p gm-ci-v2 -f ../deploy/docker-compose.v2-test.yml down -v' EXIT
-          docker compose -p gm-ci-v2 -f ../deploy/docker-compose.v2-test.yml up -d --wait
+          trap 'docker compose -p gm-ci-v2 -f deploy/docker-compose.v2-test.yml down -v' EXIT
+          docker compose -p gm-ci-v2 -f deploy/docker-compose.v2-test.yml up -d --wait
           cd backend
           go test -race -count=1 -timeout 300s ./tests/v2
   frontend:
