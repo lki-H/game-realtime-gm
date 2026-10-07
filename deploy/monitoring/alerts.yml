@@ -1,0 +1,31 @@
+groups:
+  - name: pve
+    rules:
+      - alert: PveScrapeUnavailable
+        expr: up{job="pve"} == 0
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: PVE metrics unavailable
+      - alert: PveNeedsRepair
+        expr: pve_needs_repair > 0
+        for: 10s
+        labels:
+          severity: warning
+        annotations:
+          summary: PVE work requires operator repair
+      - alert: PveEventGap
+        expr: pve_event_gaps > 0
+        for: 5s
+        labels:
+          severity: warning
+        annotations:
+          summary: Trusted event sequence gap
+      - alert: PvePendingStalled
+        expr: pve_pending_oldest_seconds > 60
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: PVE pending work exceeds local threshold

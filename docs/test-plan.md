@@ -7,6 +7,10 @@
 > 事实来源：需求、自动测试、Day27-Day35 验收与 Day34 性能记录
 > 最后更新：2026-08-31
 
+## V2/R3发布验证
+
+`backend/tests/v2` 使用独立MySQL/Redis和 `PVE_INTEGRATION=1` 验证迁移、Party、proposal、Run、任务、事件、结算、Worker、资产对账和投影重建。GitHub Actions另外运行Go普通测试/vet、Linux `go test -race`和双前端干净构建；Unity Player、GM修复、备份恢复和soak作为单独证据，不混作CI覆盖。跨机器、长时弱网和商业容量仍未验证。
+
 ## 1. 测试目标
 
 验证身份边界、状态机、幂等资产事务、Redis 投影、GM 观察和并发保护；同时保留可复现环境、命令、结果与局限。前端规划不替代后端测试。

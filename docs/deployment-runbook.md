@@ -9,7 +9,7 @@
 
 ## 1. 运行模型
 
-当前只有 MySQL 和 Redis 运行在 Docker Compose 中；Go 服务在宿主机通过 `go run` 或本地二进制启动。没有 Go Dockerfile、反向代理、TLS、Kubernetes、Helm、Ingress、HPA 或自动部署。
+MySQL/Redis由Docker Compose运行，Go仍可在宿主机 `go run`/二进制启动。R3新增非root Go Dockerfile和可选本机Prometheus/Grafana；没有TLS、Kubernetes、Helm、Ingress、HPA或自动部署。legacy沿用后文流程，V2必须先执行day37—39，配置与独立事件/指标端口见 [PVE发布指南](pve-release-guide.md)。
 
 依赖顺序：
 

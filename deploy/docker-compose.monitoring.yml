@@ -1,0 +1,23 @@
+services:
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    ports:
+      - "127.0.0.1:29090:9090"
+    volumes:
+      - ${PVE_MONITORING_CONFIG_DIR:?Prepare local monitoring configuration}/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ${PVE_MONITORING_CONFIG_DIR}/metrics-token:/run/secrets/metrics-token:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+  grafana:
+    image: grafana/grafana:12.1.1
+    ports:
+      - "127.0.0.1:23000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${PVE_GRAFANA_PASSWORD:?Set an independent temporary password}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana-datasource.yml:/etc/grafana/provisioning/datasources/pve.yml:ro
+      - ./monitoring/grafana-dashboard.yml:/etc/grafana/provisioning/dashboards/pve.yml:ro
+      - ./monitoring/dashboard.json:/var/lib/grafana/dashboards/pve.json:ro

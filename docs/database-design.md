@@ -7,6 +7,10 @@
 > 事实来源：`schema.sql`、Day31 migration、SQL 查询、Redis 实现与 Manager 结构
 > 最后更新：2026-08-31
 
+## V2/R3补充
+
+V2新增 `pve_*` 事实表并与legacy共用player_assets/asset_ledger。day37基础、day38产品、day39归档沿用编号SQL与checksum账本；`pve_run_archives`保存终态摘要、序号、指纹和事件统计。事件指纹/序号、奖励业务键、参与者结果、账本与修复审计保留，过期正文才按策略压缩。Redis使用 `v2:` 投影，不执行全库清理；旧历史不转换成Run。
+
 ## 1. 存储原则
 
 - MySQL 保存长期事实、审计和资产事务。

@@ -2,10 +2,18 @@
 
 > 文档角色：已完成能力、修复、验证与限制的版本台账
 > 权威级别：L2（阶段发布记录）
-> 状态：一期记录已建立
+> 状态：一期与V2 R3发布记录已建立
 > 适用范围：Day27-Day35 与后续公开版本
 > 事实来源：代码、测试、验收记录与性能报告
-> 最后更新：2026-08-31
+> 最后更新：2026-10-07
+
+## R3 合作PVE集成发布
+
+- 持久化Party/ticket/proposal/Run/个人任务、可信测试事件、逐人奖励、pending/outbox和Redis投影；新增归档、连接配额、GM分页与operator可靠重试。
+- 发布React双客户端、Unity6000.3.25f1工程/Windows构建、本机监控配置、Dockerfile/CI、迁移和公开运行文档。源工作区的私人资料、缓存、日志和备份不进入集成分支。
+- 原r3-ci和基于main的r3-integration CI全部通过，Go普通测试/vet、真实MySQL/Redis集成race和双前端ci/build通过。本机Unity四Player、混合来源剧本、101轮短时soak、资产修复及备份恢复另行验证，详见 [R3验收](testing/r3-release-acceptance.md)。
+- 开发库day39先备份恢复演练，再重复迁移；day37/38原checksum不变，2玩家/2资产/0余额及历史/账本摘要保持。其他环境迁移需独立执行。
+- R4退役清单和回滚门槛准备完成，尚未切换默认legacy、停旧入口、清旧Redis或删除代码；跨机器、真实战斗服和生产容量继续延期。
 
 ## Phase 1：共斗 PVE 业务后台闭环
 

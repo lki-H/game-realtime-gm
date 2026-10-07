@@ -269,3 +269,17 @@ waiting -> canceled
 - 聊天、位置、输入帧、逐帧快照、预测、回滚或弱网补偿。
 - 匹配成功、跨实例房间或会话恢复。
 - 使用当前 JSON WebSocket 作为未来战斗同步协议。
+
+## 12. V2/R3控制面
+
+以上1—11节保留legacy协议范围。显式 `GAMEPLAY_MODE=v2` 时 `/ws`只接受 `schema_version=2` 和 `v2.*`。请求携带 `request_id`和稳定 `operation_id`，同意图重试不换operation_id；同键不同内容冲突40970，归档回执41071要求查询当前活动。重连/结果查询不推进业务。
+
+```json
+{"schema_version":2,"type":"v2.party.ready","request_id":"request_example","operation_id":"operation_example","data":{"party_id":"party_example","ready":true,"roster_version":2,"plan_version":1,"selection_version":1}}
+```
+
+成功响应为对应 `type.result`，包含code/message/data和request_id；主动通知不依赖客户端ACK作为资产提交条件。动作覆盖 `v2.social.*`、`v2.party.*`、`v2.recruitment.*`、`v2.match.*`、`v2.task.pause`和 `v2.run.leave/reconnect/result`，具体结构以领域Request、客户端和测试为准。房主邀请和更改局外方案，成员自己准备和选择任务；候选逐人确认，房主不能结束Run或替其他成员确认。
+
+HTTP `/api/v2/me/activity`用于丢通知后恢复当前Party/ticket/proposal/Run及本人结果；队友任务被裁剪。`/api/v2/runs/{run_id}/results`追加本人participant_result和reward_grants。原成员重连恢复同一Run/任务尝试，局内不补新玩家。
+
+V2文本上限16KiB，发送队列上限64，全局/IP连接配额默认256/64，拒绝超额握手42972；单玩家命令默认120次/分钟，超限42970、Redis无法复核50370。V2周期复核封禁和撤销，旧连接代次不能删除新连接。客户端不能发送受信loaded/kill/finish；内部事件监听不属于公共WS或OpenAPI。

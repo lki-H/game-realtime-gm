@@ -7,6 +7,7 @@ import (
 
 	tokenauth "game-realtime-gm/backend/internal/auth"
 	"game-realtime-gm/backend/internal/model"
+	"game-realtime-gm/backend/internal/pve"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-sql-driver/mysql"
@@ -16,6 +17,7 @@ import (
 type AuthHandler struct {
 	db        *sql.DB
 	jwtSecret string
+	Versioned bool
 }
 
 func NewAuthHandler(db *sql.DB, jwtSecret string) *AuthHandler {
@@ -215,7 +217,15 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	token, err := tokenauth.GenerateToken(h.jwtSecret, player.ID, player.Username)
+	var version int64
+	if h.Versioned {
+		version, err = pve.SessionVersion(c.Request.Context(), h.db, player.ID)
+		if err != nil {
+			c.JSON(500, gin.H{"code": 50004, "message": "query session failed"})
+			return
+		}
+	}
+	token, err := tokenauth.GenerateVersionedToken(h.jwtSecret, player.ID, player.Username, version)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50004,
