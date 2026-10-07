@@ -11,32 +11,34 @@ R4 将 V2 设为受控环境的默认玩法，停止 legacy 的业务写入口�
 
 ## 2. 进入条件
 
-只有以下条件全部满足，才允许开始 R4 实施：
+本轮允许完成R4准备；以下条件全部满足后，才允许执行默认切换、关闭兼容入口或删除：
 
-1. `r3-ci` 的 GitHub Actions 保持绿色，且计划发布提交已合并到目标主分支或明确的发布分支。
+1. 基于最新main的 `r3-integration` 发布PR与合并提交的 GitHub Actions 保持绿色；记录实际提交、镜像摘要和迁移校验值作为回滚基线，不能仅引用历史不连通的r3-ci。
 2. 至少两台测试机完成 Unity 登录、组队、匹配、重连、任务和结算；弱网/断线结果可从 HTTP 快照恢复。
 3. 所有仍支持的客户端只使用 `schema_version=2`、`v2.*` 和 `/api/v2/*`，没有客户端依赖 `mission.finish` 或 `settlement.create`。
-4. 开发库与恢复副本均完成备份、迁移账本校验、资产/奖励对账；回滚版本可以启动并读取旧历史。
+4. 开发库与恢复副本均完成day37/day38/day39、备份校验和资产/奖励对账；回滚版本必须支持现有V2事实和同一schema。恢复副本只用于演练，不以旧备份覆盖有新奖励的活动库。
 5. R4 变更有明确停写窗口、观察窗口、负责人和回滚触发条件；不在有活动 Run、pending settlement 或 needs_repair 时直接切换。
 
 ## 3. 退役清单
 
 | 对象 | 处理 | 保留内容 | 验收 |
 | --- | --- | --- | --- |
-| legacy WebSocket 写命令 | 先在默认服务关闭 `squad.*`、`mission.*`、`matchmaking.*`、`settlement.create` 写入口；回滚版本继续保留 | legacy 历史查询、显式 legacy 回归实例和错误审计 | 新客户端调用旧写命令被拒绝；V2 命令仍可用 |
+| legacy WebSocket 写命令 | 关闭 `squad.create/join/leave/ready`、`mission.create/ready/start/finish/cancel`、`matchmaking.enqueue/cancel`、`settlement.create`；其旧 `*.me` 查询另行兼容评审 | 持久历史查询和隔离legacy回归；兼容回滚版本不自动重开非可信奖励入口 | 已退役命令返回明确错误，V2仍可用；历史查询继续受参与者权限保护 |
 | legacy 内存 `squad/mission/matchmaking/settlement` 装配 | 客户端迁移且回滚窗口结束后，再删除无引用装配；先保留测试和学习代码 | 迁移前版本、历史测试卡和文档证据 | `rg`、编译、测试确认没有运行依赖 |
-| 旧 Redis key/队列 | 停止 legacy 写入后按命名空间逐项清理；禁止 `FLUSHDB/FLUSHALL` | V2 `v2:` key、在线状态和可重建事实 | MySQL 可重建 V2 队列/投影；旧 key 无新写入 |
+| 旧 Redis key/队列 | 只处理 `matchmaking:queue:*`、`matchmaking:ticket:*`、`matchmaking:player:*`、`matchmaking:timeouts`；先清点、再停止写入、观察、逐key清理 | `v2:*`、`online:*`和历史 `leaderboard:{mission_id}:scores/players`全部保留 | SCAN计数/抽样及写入观察通过，V2仍可重建；不使用FLUSH或KEYS全库阻塞查询 |
 | legacy 默认配置 | `GAMEPLAY_MODE` 从 `legacy` 切为 `v2`，先在测试环境，再在开发环境 | 显式 `GAMEPLAY_MODE=legacy` 回滚配置 | 启动日志、路由和写入模式与配置一致 |
 | 旧文档/公开说明 | 更新当前入口、README、API/WS契约和发布说明；Day学习记录不批量改写 | 历史 Day、交接、回归卡和内部证据 | 文档不把退役规划写成已完成删除 |
 | 一期历史数据 | 不删除、不迁移成 V2 Run | `mission_records`、奖励、账本、审计及历史查询资格 | 备份恢复后余额和历史摘要一致 |
 
+代码删除候选为 `internal/router` 的legacy WS注册/超时Worker、`internal/handler/ws.go` 中对应写分支、旧 `squad/mission/matchmaking`装配。`internal/leaderboard`、历史Observation、`internal/model/settlement.go`等仍有HTTP历史查询用途，不能按包名整体删除。`settlement`与 `ws` helper要先逐引用核对。回归工具 `cmd/tools/ws_bot`仍使用旧协议：保留为显式隔离legacy工具，或先替换再退役，不能与新客户端同时误称V2验证。
+
 ## 4. 切换顺序
 
 1. 在隔离环境应用已验证迁移并恢复 Redis 投影。
-2. 停止新 legacy 写入，保留历史查询；等待 queued/proposed/loading/pending 归零或按明确规则中止。
+2. 实现并验证停止新enqueue/Run的准入开关与排空策略，保留历史读。当前没有维护/排空API，不能把这些动作当作现成能力；existing Run继续由可信来源推进或明确系统中止，Worker继续处理pending。
 3. 部署同时支持 V2 查询和必要 legacy 历史查询的版本，默认设置为 `GAMEPLAY_MODE=v2`。
 4. 验证健康检查、V2 登录、WebSocket、匹配、事件、Worker、结算、资产和 GM 观察指标。
-5. 观察一个完整发布窗口；确认没有 legacy 写请求、重复奖励、事件缺口或 needs_repair 增长后，再清理旧 key。
+5. 在实际停写前确定责任人、开始/结束时间、日志基线及回滚预算；观察至少覆盖成功/失败/重连和Worker恢复剧本。没有legacy新写入、重复奖励、未解决缺号或needs_repair后，再清理旧匹配key；本计划不擅自定义固定7天或永久保留期限。
 6. 观察窗口结束后才删除无引用的 legacy 装配代码；每一批删除单独提交，便于回滚。
 
 ## 5. 回滚方案
@@ -47,10 +49,14 @@ R4 将 V2 设为受控环境的默认玩法，停止 legacy 的业务写入口�
 
 1. 禁止新匹配和新 Run，等待正在处理的 Worker 完成或记录为 pending。
 2. 保留当前 MySQL 事实、账本、outbox、审计和故障记录；不要删除 V2 表或执行全库清理。
-3. 切换到上一版本并显式恢复上一版本的 `GAMEPLAY_MODE` 配置；只恢复仍受支持的旧写入口。
+3. 优先回退到本次合并的、已验证schema兼容的R3基线，并保持 `GAMEPLAY_MODE=v2`、归档关闭及新匹配暂停。不得直接回退到仅有legacy的旧main读取/处理V2结算，也不得自动重启 `mission.finish` 发奖。只有全体V2活动已终结且隔离验证确认后，才单独决定是否恢复legacy本地演示。
 4. 重新读取历史、资产和 pending 状态，确认旧版本不会重复发奖；V2 新产生的事实由专门恢复版本读取，不伪造为 legacy mission。
 5. 使用发布前备份做恢复副本对账；只有确认事实完整后，才决定是否重新开放队列。
 6. 记录回滚原因、操作编号、迁移版本、影响 Run 和修复结果；回滚完成不等于退役条件重新满足。
+
+R4切换前必须记录：发布和回滚commit SHA、服务/客户端版本、MySQL迁移checksum、备份哈希、Redis DB与key白名单、在途票据/Run/pending/needs_repair数量、余额/奖励/流水摘要。切换前后摘要分别对账；只读历史使用同一DATETIME语义，旧奖励不可伪造为Run奖励。
+
+回滚演练至少在新恢复库验证：R3基线能启动，原合法奖励重复查询/事件不增余额，pending重试只处理未完成个人结果，旧历史可查，权限/单实例named lock仍有效。演练不能通过删除资产依据或修改迁移账本制造成功。
 
 ## 6. R4 验收清单
 

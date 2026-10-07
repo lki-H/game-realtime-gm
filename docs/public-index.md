@@ -12,6 +12,7 @@
 - [V2 PVE发布与运行指南](pve-release-guide.md)
 - [R3发布验收](testing/r3-release-acceptance.md)
 - [R4退役与回滚计划](design/v2-r4-retirement-and-rollback-plan.md)
+- [R3发布与回滚安全边界](design/pve-release-threat-model.md)
 
 - [项目简介](project-introduction.md)
 - [一期成果与证据](phase1-summary.md)

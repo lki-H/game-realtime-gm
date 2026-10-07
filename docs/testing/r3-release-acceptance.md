@@ -1,12 +1,13 @@
 # R3发布验收
 
 > 权威级别：L2（发布证据摘要）
-> 状态：R3原分支CI通过；本次基于main集成需重跑CI
+> 状态：原分支与基于main的集成CI通过；合并提交CI需独立复核
 > 最后更新：2026-10-07
 
 | 对象 | 实际证据 | 边界 |
 | --- | --- | --- |
 | r3-ci远程CI | [run 37598715443](https://github.com/lki-H/game-realtime-gm/actions/runs/37598715443)，e286589：Go1.27.1普通测试/vet、V2真实MySQL/Redis race（41.433秒）、双前端ci/build通过 | 不包含Unity/镜像/跨机器 |
+| main集成CI | [run 37606110856](https://github.com/lki-H/game-realtime-gm/actions/runs/37606110856)，b664364：backend、gm-admin和pve-demo全部通过 | 合并commit仍需独立验证 |
 | Unity | Unity6000.3.25f1 Windows Player，普通四人、好友双排＋两个单排的任务/重连/逐人结算通过 | 受信事件由Bot提交，不是真战斗模拟 |
 | 本机短时soak | Ryzen5 7535H/15.24GiB，302.93秒、101轮、失败0、每轮资产对账0，场景耗时p50/p95/max=1.986/2.083/2.101秒 | 不外推容量上限，未做长时弱网 |
 | 镜像 | `game-realtime-gm:r3-local`本机构建通过，约45MB | 无云部署 |

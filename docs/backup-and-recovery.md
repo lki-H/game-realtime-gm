@@ -9,6 +9,12 @@
 
 ## 1. 目标与边界
 
+### R3迁移演练补充
+
+V2编号迁移使用schema_migrations账本与文件checksum，迁移前必须生成仓库外备份并恢复到新数据库验证。`v2_backup`只允许恢复到新建 `game_realtime_v2_*_restore`，拒绝覆盖已有库/文件；`v2_migrate -stage r3`顺序检查day37—39并拒绝dirty/校验不一致。本次开发库day39已完成真实恢复副本/原库重复应用和资产/历史摘要对账，见 [R3发布记录](testing/r3-release-acceptance.md)。
+
+V2 Redis投影可从MySQL重建；回滚不DROP V2表、不用旧备份覆盖已写入新奖励的活动库。维护/排空、R3兼容基线和旧匹配key清理门槛见 [R4回滚计划](design/v2-r4-retirement-and-rollback-plan.md)。当前仍无生产RPO/RTO承诺。
+
 MySQL 保存账号、审计、结算和资产事实，是当前必须备份的数据源。Redis 保存在线、匹配和排行榜投影；当前没有正式 Redis 恢复承诺，且多数状态可过期或从 MySQL/客户端重建。
 
 本项目尚未定义业务 RPO/RTO，没有异地副本、自动备份、自动故障转移或跨区域灾备。以下命令是本地/测试演练，不是生产方案。

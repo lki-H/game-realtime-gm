@@ -1038,7 +1038,9 @@ paths:
       summary: 查询幂等操作结果
       security: [{PlayerBearer: []}]
       parameters: [{name: operation_id, in: path, required: true, schema: {type: string}}]
-      responses: {"200": {description: 操作结果}}
+      responses:
+        "200": {description: 操作结果}
+        "410": {description: code 41071，回执已归档；通过本人活动快照恢复，不重新执行原意图}
   /api/v2/recruitment:
     get:
       tags: [V2 PVE]
@@ -1107,8 +1109,13 @@ paths:
       operationId: getV2Observation
       summary: 查询 V2 只读观察数据
       security: [{AdminBearer: []}]
-      parameters: [{name: entity, in: path, required: true, schema: {type: string, enum: [parties, proposals, runs, tasks, pending]}}]
-      responses: {"200": {description: 观察列表}}
+      parameters:
+        - {name: entity, in: path, required: true, schema: {type: string, enum: [parties, proposals, runs, tasks, pending]}}
+        - {name: page, in: query, schema: {type: integer, minimum: 1, maximum: 10000, default: 1}}
+        - {name: page_size, in: query, schema: {type: integer, minimum: 1, maximum: 50, default: 20}}
+      responses:
+        "200": {description: data为观察列表，pagination包含page/page_size/total，observed_at为UTC查询时间}
+        "400": {description: code 40070，非法分页值被拒绝}
   /api/admin/v2/metrics:
     get:
       tags: [Admin V2 PVE]
