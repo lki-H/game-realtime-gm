@@ -21,12 +21,14 @@ jobs:
           go vet ./...
       - name: Isolated integration and race
         shell: bash
+        working-directory: backend
         run: |
           export PVE_TEST_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$PVE_TEST_PASSWORD"
           export PVE_INTEGRATION=1 GIN_MODE=release
-          trap 'docker compose -p gm-ci-v2 -f deploy/docker-compose.v2-test.yml down -v' EXIT
-          docker compose -p gm-ci-v2 -f deploy/docker-compose.v2-test.yml up -d --wait
-          cd backend
+          compose_file="$GITHUB_WORKSPACE/deploy/docker-compose.v2-test.yml"
+          trap 'docker compose -p gm-ci-v2 -f "$compose_file" down -v' EXIT
+          docker compose -p gm-ci-v2 -f "$compose_file" up -d --wait --wait-timeout 150
           go test -race -count=1 -timeout 300s ./tests/v2
   frontend:
     runs-on: ubuntu-latest
