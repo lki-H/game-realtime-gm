@@ -147,18 +147,23 @@ func inspectV2Tables(ctx context.Context, connection *sql.Conn, script string) (
 	}
 	complete, partial := true, false
 	for _, definition := range definitions {
-		rows, err := connection.QueryContext(ctx, "SELECT column_name FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=?", definition[1])
+		rows, err := connection.QueryContext(ctx, "SELECT column_name,column_type,is_nullable FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=?", definition[1])
 		if err != nil {
 			return false, false, err
 		}
-		columns := map[string]bool{}
+		type columnShape struct {
+			kind     string
+			nullable string
+		}
+		columns := map[string]columnShape{}
 		for rows.Next() {
 			var column string
-			if err := rows.Scan(&column); err != nil {
+			var shape columnShape
+			if err := rows.Scan(&column, &shape.kind, &shape.nullable); err != nil {
 				rows.Close()
 				return false, false, err
 			}
-			columns[column] = true
+			columns[column] = shape
 		}
 		err = rows.Err()
 		rows.Close()
@@ -167,8 +172,13 @@ func inspectV2Tables(ctx context.Context, connection *sql.Conn, script string) (
 		}
 		partial = partial || len(columns) > 0
 		complete = complete && len(columns) > 0
-		for _, column := range regexp.MustCompile(`(?m)^\s*([a-z][a-z0-9_]*)\s+[A-Z]+`).FindAllStringSubmatch(definition[2], -1) {
-			complete = complete && columns[column[1]]
+		for _, column := range regexp.MustCompile(`(?m)^\s*([a-z][a-z0-9_]*)\s+([A-Z]+(?:\([0-9,]+\))?)([^\r\n]*)`).FindAllStringSubmatch(definition[2], -1) {
+			expectedNullable := "YES"
+			if strings.Contains(column[3], "NOT NULL") {
+				expectedNullable = "NO"
+			}
+			shape, exists := columns[column[1]]
+			complete = complete && exists && shape.kind == strings.ToLower(column[2]) && shape.nullable == expectedNullable
 		}
 		for _, index := range regexp.MustCompile(`(?i)\b(PRIMARY KEY|UNIQUE KEY\s+([a-z0-9_]+)|KEY\s+([a-z0-9_]+))\s*\(([^)]+)\)`).FindAllStringSubmatch(definition[2], -1) {
 			name := "PRIMARY"

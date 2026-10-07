@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 
@@ -11,6 +11,7 @@ async function readResponse(response: Response) {
 }
 function App() {
  const [token, setToken] = useState('');
+ const currentToken = useRef(token); currentToken.current = token;
  const [username, setUsername] = useState('');
  const [password, setPassword] = useState('');
  const [view, setView] = useState<string>('runs');
@@ -27,34 +28,36 @@ function App() {
  const [reason, setReason] = useState('');
  const [repairId, setRepairId] = useState('');
  const [notice, setNotice] = useState('');
- function logout() { setToken(''); setRole(''); setItems([]); setRepair(null); setReason(''); setNotice(''); }
+ function logout() { currentToken.current=''; setToken(''); setRole(''); setItems([]); setRepair(null); setReason(''); setNotice(''); setTotal(0); setUpdated(''); setRequestId(''); setLoading(false); setPage(1); }
  useEffect(() => {
   if (!token) return;
   const controller = new AbortController();
   setLoading(true); setError('');
-  fetch(`/api/admin/v2/observations/${view}?page=${page}&page_size=20`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal })
-   .then(async response => { setRequestId(response.headers.get('X-Request-ID') || ''); if (response.status === 401 || response.status === 403) logout(); const result = await readResponse(response); if (!response.ok || result.code !== 0) throw new Error(result.message || '请求失败'); setTotal(result.pagination?.total || 0); return result.data as Row[]; })
-   .then(data => { setItems(data); setUpdated(new Date().toLocaleTimeString()); })
-   .catch(failure => { if (failure.name !== 'AbortError') setError(failure.message); })
+  fetch(`/api/admin/v2/observations/${view}?page=${page}&page_size=20`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.any([controller.signal,AbortSignal.timeout(10000)]) })
+   .then(async response => { if(controller.signal.aborted || currentToken.current!==token)return; setRequestId(response.headers.get('X-Request-ID') || ''); if (response.status === 401 || response.status === 403) { logout(); throw new Error('管理员会话已失效，请重新登录'); } const result = await readResponse(response); if(controller.signal.aborted || currentToken.current!==token)return; if (!response.ok || result.code !== 0) throw new Error(result.message || '请求失败'); setTotal(result.pagination?.total || 0); return result.data as Row[]; })
+   .then(data => { if(data && !controller.signal.aborted && currentToken.current===token){setItems(data); setUpdated(new Date().toLocaleTimeString());} })
+   .catch(failure => { if (!controller.signal.aborted && failure.name !== 'AbortError') {setItems([]); setTotal(0); setUpdated(''); setError(failure.message);} })
    .finally(() => { if (!controller.signal.aborted) setLoading(false); });
   return () => controller.abort();
  }, [token, view, refresh, page]);
  async function login(event: React.FormEvent) {
   event.preventDefault(); setError(''); setLoading(true);
   try {
-   const response = await fetch('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+   const response = await fetch('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }), signal:AbortSignal.timeout(10000) });
    const result = await readResponse(response); if (!response.ok || result.code !== 0) throw new Error(result.message || '登录失败'); setToken(result.data.token); setRole(result.data.admin.role); setPassword(''); setPage(1);
   } catch (failure) { setError(failure instanceof Error ? failure.message : '登录失败'); } finally { setLoading(false); }
  }
  async function retry(event: React.FormEvent) {
   event.preventDefault(); if (!repair || loading) return; setLoading(true); setError('');
   try {
-   const response = await fetch(`/api/admin/v2/operations/${encodeURIComponent(String(repair.operation_id))}/retry`, {method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({operation_id:repairId,expected_attempts:Number(repair.attempts),reason})});
+   const response = await fetch(`/api/admin/v2/operations/${encodeURIComponent(String(repair.operation_id))}/retry`, {method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({operation_id:repairId,expected_attempts:Number(repair.attempts),reason}),signal:AbortSignal.timeout(10000)});
+   if(currentToken.current!==token)return;
    setRequestId(response.headers.get('X-Request-ID') || ''); const result = await readResponse(response);
+   if(currentToken.current!==token)return;
    if (response.status === 401 || response.status === 403) logout();
    if (!response.ok || result.code !== 0) throw new Error(result.message || '重试失败；刷新后核对状态与数据修复情况');
    setNotice(`已提交重试：${result.data.operation_id}`); setRepair(null); setReason(''); setRefresh(value=>value+1);
-  } catch(failure) {setError(failure instanceof Error?failure.message:'重试失败');} finally {setLoading(false);}
+  } catch(failure) {if(currentToken.current===token)setError(failure instanceof Error?failure.message:'重试失败');} finally {if(currentToken.current===token)setLoading(false);}
  }
  const columns = items.length ? Object.keys(items[0]) : [];
  return <main><header><div><p className="eyebrow">COOPERATIVE PVE · V2</p><h1>作战管理观察窗</h1><p className="subtle">房间、匹配、作战与任务处理状态</p></div>{token && <button onClick={logout}>退出登录</button>}</header>

@@ -1,7 +1,11 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 
-const backend = 'http://127.0.0.1:18082';
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const configured = loadEnv(mode, process.cwd(), 'PVE_BACKEND_URL').PVE_BACKEND_URL || 'http://127.0.0.1:18082';
+  const address = new URL(configured);
+  if (!['http:', 'https:'].includes(address.protocol) || !['127.0.0.1', 'localhost', '[::1]'].includes(address.hostname) || address.username || address.password || address.pathname !== '/' || address.search || address.hash) throw new Error('PVE_BACKEND_URL必须是本机HTTP服务地址');
+  const backend = address.origin;
+  return {
   server: {
     host: '127.0.0.1', port: 5174, strictPort: true,
     proxy: {
@@ -17,4 +21,5 @@ export default defineConfig({
       },
     },
   },
+  };
 });

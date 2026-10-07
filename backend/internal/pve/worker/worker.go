@@ -81,7 +81,9 @@ func (worker *Worker) Once(ctx context.Context) error {
 			err = worker.Settle(ctx, current.aggregate)
 		}
 		if err == nil {
-			_, err = worker.DB.ExecContext(ctx, "UPDATE pve_pending_operations SET status='done',attempts=attempts+1,last_error=NULL,updated_at=UTC_TIMESTAMP(3) WHERE operation_id=?", current.id)
+			if _, err := worker.DB.ExecContext(ctx, "UPDATE pve_pending_operations SET status='done',attempts=attempts+1,last_error=NULL,updated_at=UTC_TIMESTAMP(3) WHERE operation_id=?", current.id); err != nil {
+				return err
+			}
 		} else {
 			status := "retryable_failed"
 			if current.attempts >= 4 {
@@ -99,6 +101,7 @@ func (worker *Worker) Once(ctx context.Context) error {
 	}
 	notifications := []notification{}
 	err = store.Transaction(ctx, worker.DB, func(transaction *sql.Tx) error {
+		notifications = notifications[:0]
 		rows, err := transaction.QueryContext(ctx, "SELECT id,payload FROM pve_outbox_records WHERE status='pending' ORDER BY id LIMIT 100 FOR UPDATE SKIP LOCKED")
 		if err != nil {
 			return err

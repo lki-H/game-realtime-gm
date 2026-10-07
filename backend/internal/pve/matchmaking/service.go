@@ -56,11 +56,6 @@ func (s *Service) Execute(ctx context.Context, transaction *sql.Tx, player int64
 			if err := store.RequireNoRecruitment(ctx, transaction, player); err != nil {
 				return nil, err
 			}
-		}
-		if input.PartyID == "" {
-			if err := store.RequireNoRecruitment(ctx, transaction, player); err != nil {
-				return nil, err
-			}
 			var count int
 			if err := transaction.QueryRowContext(ctx, "SELECT COUNT(*) FROM pve_party_members WHERE player_id=? AND status='active'", player).Scan(&count); err != nil {
 				return nil, err

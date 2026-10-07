@@ -23,6 +23,8 @@ const defaultPlan: Plan = { operation: 'training_ground', difficulty: 'normal', 
 
 function App() {
   const control = useRef(new Control()).current;
+  const refreshGeneration = useRef(0), actionPending = useRef(false);
+  const refreshCurrent = useRef<() => Promise<void>>(async () => {});
   const [player, setPlayer] = useState(0), [username, setUsername] = useState(''), [password, setPassword] = useState('');
   const [connected, setConnected] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [tab, setTab] = useState(0), [activity, setActivity] = useState<Activity>({}), [cards, setCards] = useState<TaskCard[]>([]);
@@ -40,23 +42,30 @@ function App() {
 
   async function refresh() {
     if (!control.token) return;
-    const snapshot = await control.query<Activity>('/api/v2/me/activity'); setActivity(snapshot);
-	setCards(await control.query<TaskCard[]>(`/api/v2/tasks?rule_version=${encodeURIComponent(version)}`));
-    if (snapshot.proposal) setProposal(snapshot.proposal);
-	if(snapshot.recruitment?.[0])setGuestParty(snapshot.recruitment[0].party_id);
-	if(snapshot.regroup_proposals?.[0])setRegroupId(snapshot.regroup_proposals[0].id);
+    const generation = ++refreshGeneration.current, token = control.token;
+    const [snapshot, catalog] = await Promise.all([control.query<Activity>('/api/v2/me/activity'), control.query<TaskCard[]>(`/api/v2/tasks?rule_version=${encodeURIComponent(version)}`)]);
     const runId = snapshot.run?.id || snapshot.latest_result?.run_id;
-    if (runId) {
-      const run = await control.query<Run>(`/api/v2/runs/${encodeURIComponent(runId)}/results`); setResult(run);
-      if (run.settled && !regroupIds) setRegroupIds(run.participants.map(member => member.player_id).join(','));
-    }
+    const room = snapshot.recruitment?.[0]?.party_id || '';
+    const [run, recruitment] = await Promise.all([
+      runId ? control.query<Run>(`/api/v2/runs/${encodeURIComponent(runId)}/results`) : Promise.resolve(null),
+      room ? control.query<{ party: Party; guests: Member[] }>(`/api/v2/recruitment/parties/${encodeURIComponent(room)}`) : Promise.resolve(null),
+    ]);
+    if (generation !== refreshGeneration.current || token !== control.token) return;
+    setActivity(snapshot); setCards(catalog); setProposal(snapshot.proposal || null); setResult(run);
+    setGuestParty(room); setGuestGroup(recruitment?.party || null); setGuests(recruitment?.guests || []);
+    if(snapshot.regroup_proposals?.[0])setRegroupId(snapshot.regroup_proposals[0].id);
+    if (run?.settled && !regroupIds) setRegroupIds(run.participants.map(member => member.player_id).join(','));
   }
+  refreshCurrent.current = refresh;
   async function perform(action: () => Promise<unknown>, success = '操作已确认') {
+    if(actionPending.current)return;
+    actionPending.current = true;
+    const token = control.token;
     setBusy(true); setError('');
-    try { await action(); if(success)setNotice(success); await refresh(); } catch (failure) { setError(failure instanceof Error ? failure.message : '操作失败'); } finally { setBusy(false); }
+    try { await action(); if(token !== control.token)return; if(success)setNotice(success); await refreshCurrent.current(); } catch (failure) { if(token === control.token)setError(failure instanceof Error ? failure.message : '操作失败'); } finally { actionPending.current = false; setBusy(false); }
   }
   useEffect(() => {
-    control.connection = setConnected;
+    control.connection = value => { setConnected(value); if(value)void refreshCurrent.current().catch(() => setError('重连恢复失败，请刷新状态')); };
     control.changed = (message: Envelope) => {
       const data = message.data as Record<string, unknown> | undefined;
       if (message.type === 'v2.party.invited' && data) setInvitation(String(data.token));
@@ -64,16 +73,20 @@ function App() {
       if (message.type === 'v2.recruitment.accepted' && data) setGuestParty(String(data.party_id));
       if (message.type === 'v2.party.regroup_proposed' && data) setRegroupId(String(data.proposal_id));
       if (message.code && message.code !== 0) setError(message.message || '操作失败');
-      if (message.type?.startsWith('v2.') && !message.type.endsWith('.result')) void refresh().catch(() => setError('状态同步失败，请刷新恢复'));
+      if (message.type?.startsWith('v2.') && !message.type.endsWith('.result')) void refreshCurrent.current().catch(() => setError('状态同步失败，请刷新恢复'));
     };
     return () => control.close();
   }, [control]);
   useEffect(() => {
     if (!player) return;
-    void control.query<TaskCard[]>(`/api/v2/tasks?rule_version=${encodeURIComponent(version)}`).then(setCards).catch(failure => setError(failure.message));
-    void control.query<Preview>(`/api/v2/operations/preview?rule_version=${encodeURIComponent(version)}&task_key=${encodeURIComponent(taskKey)}`).then(setPreview).catch(failure => setError(failure.message));
+    let active = true;
+    setPreview(null);
+    void control.query<TaskCard[]>(`/api/v2/tasks?rule_version=${encodeURIComponent(version)}`).then(value => {if(active)setCards(value);}).catch(failure => {if(active)setError(failure.message);});
+    void control.query<Preview>(`/api/v2/operations/preview?rule_version=${encodeURIComponent(version)}&task_key=${encodeURIComponent(taskKey)}`).then(value => {if(active)setPreview(value);}).catch(failure => {if(active)setError(failure.message);});
+    return () => { active = false; };
   }, [player, version, taskKey, control]);
-  useEffect(() => { if (!player) return; const timer = setInterval(() => void refresh().catch(() => {}), 4000); return () => clearInterval(timer); }, [player]);
+  useEffect(() => { if (!player) return; const timer = setInterval(() => void refreshCurrent.current().catch(() => {}), 4000); return () => clearInterval(timer); }, [player]);
+  function logout() { ++refreshGeneration.current; control.close(); setPlayer(0); setActivity({}); setResult(null); setRegroup(null); setProposal(null); setInvitation(''); setGuestParty(''); setGuests([]); setGuestGroup(null); setRegroupId(''); setRegroupIds(''); setApplication(''); setPosts([]); setCards([]); setPreview(null); setTaskKey(''); setPeer(''); setError(''); setNotice(''); }
   async function login(event: React.FormEvent) { event.preventDefault(); setBusy(true); setError(''); try { setPlayer(await control.login(username, password)); setPassword(''); await refresh(); } catch (failure) { setError(failure instanceof Error ? failure.message : '登录失败'); } finally { setBusy(false); } }
   async function recruitmentSnapshot(room: string) { const snapshot = await control.query<{ party: Party; guests: Member[] }>(`/api/v2/recruitment/parties/${encodeURIComponent(room)}`); setGuestGroup(snapshot.party); setGuests(snapshot.guests); }
   async function chooseTask() {
@@ -83,7 +96,7 @@ function App() {
   }
 
   return <div className="app"><aside className="rail"><div className="brand"><span className="brand-mark">＋</span><strong>CO-OP<br/><span>作战控制中心</span></strong></div><div className="rail-note">共同作战<br/>各自推进任务</div><nav aria-label="主要功能">{tabs.map((label, index) => <button key={label} aria-current={tab === index ? 'page' : undefined} onClick={() => setTab(index)}><span>0{index + 1}</span>{label}</button>)}</nav><div className="rail-foot"><span className={`dot ${connected ? 'online' : ''}`}/>{connected ? '已连接作战大厅' : '尚未连接'}<small>最多四人 · 独立 PVE 作战</small></div></aside>
-    <main><header><div><p className="eyebrow">OPERATIONS / COOPERATIVE PVE</p><h1>{tabs[tab]}</h1><p className="muted">一起进入同一关卡，保留每个人自己的任务节奏。</p></div>{player > 0 && <div className="identity"><span>玩家 {player}</span><button className="quiet" onClick={() => void perform(refresh, '已恢复当前状态')}>刷新状态</button><button className="quiet" onClick={() => { control.close(); setPlayer(0); setConnected(false); setActivity({}); setResult(null); setRegroup(null); setProposal(null); setInvitation(''); }}>退出登录</button></div>}</header>
+    <main><header><div><p className="eyebrow">OPERATIONS / COOPERATIVE PVE</p><h1>{tabs[tab]}</h1><p className="muted">一起进入同一关卡，保留每个人自己的任务节奏。</p></div>{player > 0 && <div className="identity"><span>玩家 {player}</span><button className="quiet" onClick={() => void perform(refresh, '已恢复当前状态')}>刷新状态</button><button className="quiet" disabled={busy} onClick={logout}>退出登录</button></div>}</header>
       {error && <div role="alert" className="banner error">{error}{control.lastUnknown && <button onClick={() => { const intent = control.lastUnknown!; void perform(() => control.send(intent.type, intent.data, intent.operationId)); }}>重试同一操作</button>}</div>}
       {notice && <div role="status" className="banner notice">{notice}</div>}
       {!player ? <section className="login-layout"><div className="briefing"><p className="eyebrow">READY WHEN YOU ARE</p><h2>四个人。<br/>一个共同目标。</h2><p>好友房间继续保留；补来的队友属于本次作战。个人任务可选，完成后各自获取对应奖励。</p><div className="brief-stats"><span><b>04</b>小队人数上限</span><span><b>PVE</b>合作作战</span></div></div><form onSubmit={login} className="login-card"><h2>进入作战大厅</h2><p className="muted">使用现有玩家账号登录。</p><label>玩家账号<input required autoComplete="username" value={username} onChange={event => setUsername(event.target.value)}/></label><label>密码<input required type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)}/></label><button className="primary" disabled={busy} type="submit">{busy ? '正在登录…' : '登录并连接'}</button><small className="muted">登录信息只保留在本次页面会话。</small></form></section> : <>

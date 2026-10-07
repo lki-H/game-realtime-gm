@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -53,10 +54,13 @@ func main() {
 	}
 	defer redisClient.Close()
 	log.Println("redis connected")
+	var listenerShutdown sync.WaitGroup
 
 	if cfg.Pprof.Enabled {
 		pprofServer := diagnostics.NewPprofServer(cfg.Pprof.Addr)
+		listenerShutdown.Add(1)
 		go func() {
+			defer listenerShutdown.Done()
 			<-ctx.Done()
 			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -135,13 +139,16 @@ func main() {
 			IdleTimeout:       30 * time.Second,
 			MaxHeaderBytes:    1 << 20,
 		}
+		listenerShutdown.Add(1)
 		go func() {
 			log.Printf("pve test event server listening on http://%s", cfg.PVE.TestEventsAddr)
 			if err := internalServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Printf("pve test event server stopped unexpectedly: %v", err)
+				stop()
 			}
 		}()
 		go func() {
+			defer listenerShutdown.Done()
 			<-ctx.Done()
 			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -154,6 +161,7 @@ func main() {
 			log.Fatal("metrics require v2, loopback address and independent service token")
 		}
 		metricsServer := &http.Server{Addr: cfg.PVE.MetricsAddr, Handler: router.NewPVEMetricsHandler(db, cfg.PVE.MetricsToken), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384}
+		listenerShutdown.Add(1)
 		go func() {
 			if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				slog.Error("pve metrics listener stopped", "error", err.Error())
@@ -161,6 +169,7 @@ func main() {
 			}
 		}()
 		go func() {
+			defer listenerShutdown.Done()
 			<-ctx.Done()
 			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -182,4 +191,5 @@ func main() {
 	}
 	<-workerDone
 	<-shutdownDone
+	listenerShutdown.Wait()
 }

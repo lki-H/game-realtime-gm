@@ -8,27 +8,39 @@ export class Control {
   private pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout>; intent:{type:string;data:unknown;operationId:string} }>();
   lastUnknown: { type: string; data: unknown; operationId: string } | null = null;
 
+  private async response(response: Response) {
+    let result;
+    try { result = await response.json(); } catch { throw new Error(`服务响应无效（HTTP ${response.status}），请检查后端与代理`); }
+    if (!response.ok || result.code !== 0) throw new Error(result.message || `请求失败（HTTP ${response.status}）`);
+    return result;
+  }
+
   async query<T>(path: string): Promise<T> {
     if (!path.startsWith('/api/')) throw new Error('查询地址无效');
     const response = await fetch(path, { headers: { Authorization: `Bearer ${this.token}` }, signal: AbortSignal.timeout(10000) });
-    const result = await response.json();
-    if (!response.ok || result.code !== 0) throw new Error(result.message || '查询失败');
+    const result = await this.response(response);
     return result.data as T;
   }
   async login(username: string, password: string): Promise<number> {
     const response = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }), signal: AbortSignal.timeout(10000) });
-    const result = await response.json();
-    if (!response.ok || result.code !== 0) throw new Error(result.message || '登录失败');
+    const result = await this.response(response);
+    this.close();
     this.token = result.data.token;
     this.connect();
     return result.data.player.id;
   }
   connect() {
-    this.socket?.close();
+    if (!this.token) throw new Error('请先登录');
+    const previous = this.socket;
+    this.socket = null;
+    previous?.close();
+    this.rejectPending();
+    this.connection(false);
     const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?token=${encodeURIComponent(this.token)}`);
     this.socket = socket;
-    socket.onopen = () => { if (this.socket === socket) this.connection(true); };
-    socket.onclose = () => { if (this.socket === socket) { this.connection(false); this.rejectPending(); } };
+    const deadline = setTimeout(() => { if (this.socket === socket && socket.readyState !== WebSocket.OPEN) socket.close(); }, 10000);
+    socket.onopen = () => { clearTimeout(deadline); if (this.socket === socket) this.connection(true); };
+    socket.onclose = () => { clearTimeout(deadline); if (this.socket === socket) { this.socket = null; this.connection(false); this.rejectPending(); } };
     socket.onmessage = event => {
       if (this.socket !== socket || typeof event.data !== 'string' || event.data.length > 1048576) return;
       let message: Envelope;
@@ -50,10 +62,14 @@ export class Control {
         this.pending.delete(requestId); this.lastUnknown = { type, data, operationId };
         reject(new Error('操作结果尚不确定。请恢复状态或重试同一操作。'));
       }, 15000);
-      this.pending.set(requestId, { resolve: value => { this.lastUnknown = null; resolve(value as T); }, reject, timer,intent:{type,data,operationId} });
-      this.socket!.send(JSON.stringify({ schema_version: 2, type, data, operation_id: operationId, request_id: requestId }));
+      this.pending.set(requestId, { resolve: value => { if(this.lastUnknown?.operationId === operationId)this.lastUnknown = null; resolve(value as T); }, reject, timer,intent:{type,data,operationId} });
+      try {
+        this.socket!.send(JSON.stringify({ schema_version: 2, type, data, operation_id: operationId, request_id: requestId }));
+      } catch {
+        clearTimeout(timer); this.pending.delete(requestId); reject(new Error('操作未能发送，请重连后恢复状态'));
+      }
     });
   }
-  close() { const socket = this.socket; this.socket = null; socket?.close(); this.token = ''; this.rejectPending(); }
+  close() { const socket = this.socket; this.socket = null; socket?.close(); this.token = ''; this.rejectPending(); this.lastUnknown = null; this.connection(false); }
   private rejectPending() { for (const pending of this.pending.values()) { clearTimeout(pending.timer); this.lastUnknown=pending.intent; pending.reject(new Error('连接已关闭，请查询恢复状态')); } this.pending.clear(); }
 }

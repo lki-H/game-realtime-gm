@@ -138,6 +138,9 @@ func New(ctx context.Context, db *sql.DB, redisClient *redis.Client, cfg config.
 
 	adminProtected := api.Group("/admin")
 	adminProtected.Use(middleware.AdminAuth(cfg.JWTSecret))
+	if cfg.GameplayMode == "v2" {
+		adminProtected.Use(middleware.AdminSession(db))
+	}
 	adminProtected.GET("/me", adminHandler.Me)
 	adminProtected.GET("/dashboard/summary", adminHandler.DashboardSummary)
 	adminProtected.GET("/dashboard/recent-operation-logs", adminHandler.RecentOperationLogs)
