@@ -1,0 +1,25 @@
+{
+ "version":"training_ground.v1",
+ "operation":"training_ground",
+ "difficulty":"normal",
+ "duration_seconds":1200,
+ "reinforcements":3,
+ "success_reward":100,
+ "failure_reward":20,
+ "abort_reward":0,
+ "fill_wait_seconds":30,
+ "confirmation_seconds":15,
+ "loading_seconds":30,
+ "reconnect_seconds":60,
+ "gap_seconds":15,
+ "spawn_seconds":10,
+ "objectives":[{"key":"shared_kills","type":"kill","required":3,"scope":"team"},{"key":"shared_interact","type":"interact","required":1,"scope":"team"},{"key":"shared_reach","type":"reach","required":1,"scope":"team"}],
+ "tasks":[
+  {"key":"hunter","operation":"training_ground","reward":30,"next":"hunter_2","objectives":[{"key":"kills","type":"kill","required":3,"scope":"team","persistent":true}]},
+  {"key":"hunter_2","operation":"training_ground","reward":50,"locked":true,"objectives":[{"key":"kills","type":"kill","required":6,"scope":"self","persistent":true}]},
+  {"key":"technician","operation":"training_ground","reward":40,"objectives":[{"key":"interact","type":"interact","required":1,"scope":"eligible","persistent":true}]},
+  {"key":"scout","operation":"training_ground","reward":25,"objectives":[{"key":"reach","type":"reach","required":1,"scope":"self","persistent":true}]},
+  {"key":"survivor","operation":"training_ground","reward":45,"requires_success":true,"no_deaths":true,"objectives":[{"key":"kills","type":"kill","required":1,"scope":"team"}]},
+  {"key":"other_map","operation":"future_map","reward":50,"objectives":[{"key":"kills","type":"kill","required":1,"scope":"team","persistent":true}]}
+ ]
+}

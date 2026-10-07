@@ -2,10 +2,11 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Game Realtime GM HTTP API
-  version: 1.0.0
+  version: 2.0.0
   summary: 当前单体 Go 服务的 HTTP 机器契约
   description: |
-    本文件只描述 `backend/internal/router/router.go` 中已经实现的 27 条 HTTP 路由。
+    本文件描述 `backend/internal/router/router.go` 中的 legacy 公共 HTTP 及 V2 查询接口。
+    V2 路径仅在 GAMEPLAY_MODE=v2 中注册，内部事件监听器不属于公共契约。
     所有 HTTP 响应都包含 `X-Request-ID` 响应头。WebSocket `/ws` 的连接与消息契约
     由 `docs/ws-protocol.md` 单独维护，不在 OpenAPI 中建模业务消息。
 externalDocs:
@@ -17,7 +18,7 @@ x-document-metadata:
   status: 已实现
   scope: 当前 Go 单体服务 HTTP 路由
   fact-source: backend/internal/router/router.go 与当前 Handler
-  last-updated: 2026-08-31
+  last-updated: 2026-10-06
 servers:
   - url: http://localhost:8080
     description: 本地开发服务
@@ -30,6 +31,8 @@ tags:
   - name: Admin
   - name: Admin Audit
   - name: Admin Observation
+  - name: V2 PVE
+  - name: Admin V2 PVE
 
 paths:
   /health:
@@ -926,6 +929,222 @@ paths:
           $ref: "#/components/responses/AdminForbidden"
         "500":
           $ref: "#/components/responses/InternalError"
+
+  /api/v2/players/search:
+    get:
+      tags: [V2 PVE]
+      operationId: searchV2Players
+      summary: 搜索可交互玩家
+      security: [{PlayerBearer: []}]
+      parameters:
+        - {name: q, in: query, required: true, schema: {type: string, maxLength: 128}}
+      responses: {"200": {description: 玩家搜索结果}, "401": {$ref: "#/components/responses/Unauthorized"}}
+  /api/v2/friends:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2Friends
+      summary: 查询好友
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: 好友列表}}
+  /api/v2/friends/requests:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2FriendRequests
+      summary: 查询好友申请
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: 好友申请列表}}
+  /api/v2/friends/blocks:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2Blocks
+      summary: 查询拉黑对象
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: 拉黑列表}}
+  /api/v2/messages:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2Messages
+      summary: 查询私聊历史
+      security: [{PlayerBearer: []}]
+      parameters:
+        - {name: peer_id, in: query, required: true, schema: {type: integer, format: int64}}
+      responses: {"200": {description: 最近消息}}
+  /api/v2/messages/unread:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2Unread
+      summary: 查询私聊未读
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: 未读统计}}
+  /api/v2/me/activity:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2ActivitySnapshot
+      summary: 查询本人统一活动恢复视图
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: Party/票据/候选/Run/逐人结果和待处理操作的组合视图}}
+  /api/v2/parties/{party_id}:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2Party
+      summary: 查询好友房间
+      security: [{PlayerBearer: []}]
+      parameters: [{name: party_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: Party 快照}}
+  /api/v2/parties/{party_id}/snapshot:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2PartySnapshot
+      summary: 恢复好友房间快照
+      security: [{PlayerBearer: []}]
+      parameters: [{name: party_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: Party 恢复快照}}
+  /api/v2/match/proposals/{proposal_id}:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2Proposal
+      summary: 查询匹配候选
+      security: [{PlayerBearer: []}]
+      parameters: [{name: proposal_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: 候选状态}}
+  /api/v2/runs/{run_id}:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2Run
+      summary: 查询 Run
+      security: [{PlayerBearer: []}]
+      parameters: [{name: run_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: Run 快照}}
+  /api/v2/runs/{run_id}/snapshot:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2RunSnapshot
+      summary: 恢复 Run 快照
+      security: [{PlayerBearer: []}]
+      parameters: [{name: run_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: Run 恢复快照}}
+  /api/v2/runs/{run_id}/results:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2RunResults
+      summary: 查询 Run 结果
+      security: [{PlayerBearer: []}]
+      parameters: [{name: run_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: Run 结果}}
+  /api/v2/operations/{operation_id}:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2Operation
+      summary: 查询幂等操作结果
+      security: [{PlayerBearer: []}]
+      parameters: [{name: operation_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: 操作结果}}
+  /api/v2/recruitment:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2Recruitment
+      summary: 查询临时招募帖
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: 招募帖列表}}
+  /api/v2/recruitment/parties/{party_id}:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2RecruitmentParty
+      summary: 查询本局招募成员准备状态
+      security: [{PlayerBearer: []}]
+      parameters: [{name: party_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: 本人可见的招募任务选择、准备和到期信息}}
+  /api/v2/recruitment/applications:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2RecruitmentApplications
+      summary: 查询本人或自己招募帖的申请
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: 已脱敏的申请状态列表}}
+  /api/v2/operations/catalog:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2OperationCatalog
+      summary: 查询已发布关卡规则目录
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: 关卡、规则版本、共同目标和标签}}
+  /api/v2/operations/preview:
+    get:
+      tags: [V2 PVE]
+      operationId: previewV2TaskCompatibility
+      summary: 预览个人任务兼容性
+      security: [{PlayerBearer: []}]
+      parameters:
+        - {name: rule_version, in: query, required: true, schema: {type: string}}
+        - {name: task_key, in: query, required: false, schema: {type: string}}
+      responses: {"200": {description: 关卡准入、任务兼容原因、机会和结算时点}}
+  /api/v2/operations/recommendations:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2OperationRecommendations
+      summary: 查询本人任务的兼容关卡推荐
+      security: [{PlayerBearer: []}]
+      parameters: [{name: task_key, in: query, required: false, schema: {type: string}}]
+      responses: {"200": {description: 仅基于公开规则和本人选择的有限推荐}}
+  /api/v2/tasks:
+    get:
+      tags: [V2 PVE]
+      operationId: listV2TaskCatalog
+      summary: 查询任务目录
+      security: [{PlayerBearer: []}]
+      responses: {"200": {description: 版本化任务规则}}
+  /api/v2/regroup/{proposal_id}:
+    get:
+      tags: [V2 PVE]
+      operationId: getV2RegroupProposal
+      summary: 查询续组同意状态
+      security: [{PlayerBearer: []}]
+      parameters: [{name: proposal_id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: 本人参与的续组申请和成员响应}}
+  /api/admin/v2/observations/{entity}:
+    get:
+      tags: [Admin V2 PVE]
+      operationId: getV2Observation
+      summary: 查询 V2 只读观察数据
+      security: [{AdminBearer: []}]
+      parameters: [{name: entity, in: path, required: true, schema: {type: string, enum: [parties, proposals, runs, tasks, pending]}}]
+      responses: {"200": {description: 观察列表}}
+  /api/admin/v2/metrics:
+    get:
+      tags: [Admin V2 PVE]
+      operationId: getV2Metrics
+      summary: Prometheus 兼容业务指标
+      security: [{AdminBearer: []}]
+      responses: {"200": {description: Prometheus metrics}}
+  /api/admin/v2/operations/{operation_id}/retry:
+    post:
+      tags: [Admin V2 PVE]
+      operationId: retryV2SettlementOperation
+      summary: 故障修复后重试已耗尽重试次数的结算
+      description: 实时查询管理员身份，仅 operator 角色可调用。目标必须为 needs_repair 的 settlement 操作、Run 仍 ending 且参与者资产存在。重复修复 operation_id 不重复重置或写审计，不直接发币。
+      security: [{AdminBearer: []}]
+      parameters:
+        - {name: operation_id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operation_id, expected_attempts, reason]
+              properties:
+                operation_id: {type: string, minLength: 8, maxLength: 120, description: 本次修复的稳定意图键}
+                expected_attempts: {type: integer, minimum: 1, description: 查询观察接口所得的原操作尝试次数}
+                reason: {type: string, minLength: 1, maxLength: 512, description: 故障原因与修复说明，服务端限制为512字节}
+      responses:
+        "200": {description: 原操作重新进入 pending，修复回执与审计已持久化}
+        "400": {description: 修复请求无效}
+        "401": {description: 管理员身份无效}
+        "403": {description: 玩家、普通GM或已撤销角色没有修复权限}
+        "404": {description: 目标操作或Run不存在}
+        "409": {description: 状态或尝试版本冲突、故障未消除、同修复键不同内容}
+        "429": {description: 超出入口限流，code 42970}
+        "500": {description: 事务或审计失败，没有提交修复}
 
 components:
   securitySchemes:

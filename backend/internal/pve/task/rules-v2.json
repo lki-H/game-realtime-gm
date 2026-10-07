@@ -1,0 +1,28 @@
+{
+ "version":"training_ground.v2",
+ "operation":"training_ground",
+ "difficulty":"normal",
+ "duration_seconds":1200,
+ "reinforcements":3,
+ "success_reward":100,
+ "failure_reward":20,
+ "abort_reward":0,
+ "fill_wait_seconds":30,
+ "confirmation_seconds":15,
+ "loading_seconds":30,
+ "reconnect_seconds":60,
+ "gap_seconds":15,
+ "spawn_seconds":10,
+ "objectives":[{"key":"shared_kills","type":"kill","required":3,"scope":"team"},{"key":"shared_interact","type":"interact","required":1,"scope":"team"},{"key":"shared_reach","type":"reach","required":1,"scope":"team"}],
+ "tasks":[
+  {"key":"hunter","version":"training_ground.v1","operation":"training_ground","reward":30,"next":"hunter_2","objectives":[{"key":"kills","type":"kill","required":3,"scope":"team","persistent":true}]},
+  {"key":"hunter_2","version":"training_ground.v1","operation":"training_ground","reward":50,"locked":true,"objectives":[{"key":"kills","type":"kill","required":6,"scope":"self","persistent":true}]},
+  {"key":"technician","version":"training_ground.v1","operation":"training_ground","reward":40,"objectives":[{"key":"interact","type":"interact","required":1,"scope":"eligible","persistent":true}]},
+  {"key":"scout","version":"training_ground.v1","operation":"training_ground","reward":25,"objectives":[{"key":"reach","type":"reach","required":1,"scope":"self","persistent":true}]},
+  {"key":"survivor","version":"training_ground.v1","operation":"training_ground","reward":45,"requires_success":true,"no_deaths":true,"objectives":[{"key":"kills","type":"kill","required":1,"scope":"team"}]},
+  {"key":"other_map","version":"training_ground.v1","operation":"future_map","reward":50,"objectives":[{"key":"kills","type":"kill","required":1,"scope":"team","persistent":true}]},
+  {"key":"field_engineer","operation":"training_ground","reward":40,"objectives":[{"key":"install","type":"interact","target_id":"terminal","required":1,"scope":"team","persistent":true},{"key":"reach","type":"reach","target_id":"exit","required":1,"scope":"team","persistent":true,"depends_on":["install"]}]},
+  {"key":"medic","operation":"training_ground","reward":40,"objectives":[{"key":"heal","type":"heal","required":2,"scope":"self","persistent":true,"opportunity":"conditional"}]},
+  {"key":"daily_support","operation":"training_ground","reward":15,"repeat_seconds":86400,"objectives":[{"key":"assist","type":"interact","required":1,"scope":"eligible","persistent":true}]}
+ ]
+}

@@ -19,6 +19,7 @@ import (
 type AdminHandler struct {
 	db          *sql.DB
 	redisClient *redis.Client
+	Versioned   bool
 }
 
 type banPlayerRequest struct {
@@ -521,7 +522,7 @@ func (h *AdminHandler) BanPlayer(c *gin.Context) {
 	var currentStatus string
 	err = tx.QueryRowContext(
 		c.Request.Context(),
-		`SELECT status FROM players WHERE id = ?`,
+		`SELECT status FROM players WHERE id = ? FOR UPDATE`,
 		playerID,
 	).Scan(&currentStatus)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -593,6 +594,12 @@ func (h *AdminHandler) BanPlayer(c *gin.Context) {
 		return
 	}
 
+	if h.Versioned {
+		if _, err := tx.ExecContext(c.Request.Context(), "INSERT INTO pve_session_revocations(player_id,revoked_through) VALUES(?,UTC_TIMESTAMP(3)) ON DUPLICATE KEY UPDATE revoked_through=UTC_TIMESTAMP(3)", playerID); err != nil {
+			c.JSON(500, gin.H{"code": 50055, "message": "revoke session failed"})
+			return
+		}
+	}
 	if err := h.recordOperationTx(c, tx, "admin.players.ban", "player", &playerID, "reason="+reason); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    50054,
@@ -664,7 +671,7 @@ func (h *AdminHandler) UnbanPlayer(c *gin.Context) {
 	var currentStatus string
 	err = tx.QueryRowContext(
 		c.Request.Context(),
-		`SELECT status FROM players WHERE id = ?`,
+		`SELECT status FROM players WHERE id = ? FOR UPDATE`,
 		playerID,
 	).Scan(&currentStatus)
 	if errors.Is(err, sql.ErrNoRows) {

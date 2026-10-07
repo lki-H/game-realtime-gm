@@ -13,3 +13,13 @@ func TestGetEnvBool(t *testing.T) {
 		t.Fatal("invalid value should use default")
 	}
 }
+
+func TestLoadPVEConfig(t *testing.T) {
+	t.Setenv("GAMEPLAY_MODE", "v2")
+	t.Setenv("PVE_TEST_EVENTS_ENABLED", "true")
+	t.Setenv("PVE_RULES_PATH", "rules.fixture.json")
+	config := Load()
+	if config.GameplayMode != "v2" || !config.PVE.TestEventsEnabled || config.PVE.RulesPath != "rules.fixture.json" {
+		t.Fatal("unexpected v2 config")
+	}
+}

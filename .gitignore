@@ -23,6 +23,15 @@ dist/
 build/
 coverage/
 
+client/unity-demo/[Ll]ibrary/
+client/unity-demo/[Tt]emp/
+client/unity-demo/[Oo]bj/
+client/unity-demo/[Ll]ogs/
+client/unity-demo/[Uu]ser[Ss]ettings/
+client/unity-demo/*.csproj
+client/unity-demo/*.sln
+client/unity-demo/*.slnx
+
 # Go build output
 *.exe
 *.test

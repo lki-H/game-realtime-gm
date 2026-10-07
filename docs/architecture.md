@@ -11,7 +11,9 @@
 
 当前系统是单实例、单进程的模块化 Go 单体。它对外提供 HTTP API 和玩家 WebSocket，对内连接 MySQL、Redis，并可选择启动仅绑定本机的 pprof 服务。
 
-本图不包含尚未实现的 React、Unity、Dedicated Server、微服务、Kubernetes 或云资源。
+本图描述legacy一期；V2与R3新增边界见发布指南。仍不包含真实Dedicated Server、微服务、Kubernetes或云资源。
+
+V2使用 `internal/pve` 领域链路，MySQL保存Party、ticket、proposal、Run、事件、任务、奖励和pending事实，Redis仅保存可重建投影。Run裁决不接受房主finish；逐人结算可独立重试。R3提供归档、连接配额、loopback指标、GM修复和非root镜像。
 
 ## 2. 运行拓扑
 
@@ -51,7 +53,7 @@ flowchart LR
 | MySQL | Docker Compose | `3306` | Docker volume |
 | Redis | Docker Compose | `6379` | Docker volume，但业务只依赖其可重建/临时职责 |
 
-当前没有 Go 服务 Dockerfile、反向代理、TLS 终止、Ingress、负载均衡或自动部署。
+当前有Go服务Dockerfile及GitHub Actions测试构建；没有反向代理、TLS终止、Ingress、负载均衡或自动部署。
 
 ## 4. 数据所有权
 
