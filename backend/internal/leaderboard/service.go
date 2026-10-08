@@ -349,6 +349,7 @@ func (s *Service) ListHistory(ctx context.Context, playerID int64, page int, pag
 		); err != nil {
 			return nil, err
 		}
+		item.SettledAt = model.LegacyDatetime(item.SettledAt)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {

@@ -132,14 +132,6 @@ func (service *Service) FinalizeRun(ctx context.Context, runID string) error {
 				return err
 			}
 		}
-		for _, participant := range state.Participants {
-			if !participant.TaskCompleted {
-				continue
-			}
-			if _, err := transaction.ExecContext(ctx, "UPDATE pve_party_members SET task_selection=JSON_OBJECT(),selection_version=selection_version+1,ready=0 WHERE player_id=? AND status='active' AND JSON_UNQUOTE(JSON_EXTRACT(task_selection,'$.task_key'))=? AND JSON_UNQUOTE(JSON_EXTRACT(task_selection,'$.task_version'))=?", participant.PlayerID, participant.TaskKey, participant.TaskVersion); err != nil {
-				return err
-			}
-		}
 		if _, err := transaction.ExecContext(ctx, "UPDATE pve_parties SET status='open' WHERE id IN (SELECT source_party_id FROM pve_match_tickets WHERE id IN (SELECT source_ticket_id FROM pve_run_participants WHERE run_id=?))", state.ID); err != nil {
 			return err
 		}

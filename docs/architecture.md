@@ -3,15 +3,15 @@
 > 文档角色：当前高层架构、运行拓扑和系统边界
 > 权威级别：L1（HLD 事实源）
 > 状态：已实现
-> 适用范围：一期 Go 单体服务
+> 适用范围：legacy历史与V2/R4本机Go单体
 > 事实来源：`cmd/server`、`internal/router`、Docker Compose、MySQL schema 与 Redis 实现
-> 最后更新：2026-08-31
+> 最后更新：2026-10-08
 
 ## 1. 架构范围
 
 当前系统是单实例、单进程的模块化 Go 单体。它对外提供 HTTP API 和玩家 WebSocket，对内连接 MySQL、Redis，并可选择启动仅绑定本机的 pprof 服务。
 
-本图描述legacy一期；V2与R3新增边界见发布指南。仍不包含真实Dedicated Server、微服务、Kubernetes或云资源。
+本图描述legacy一期；V2/R4边界见发布指南。默认V2使用持久化准入与Worker，旧内存装配只在显式legacy模式启用。仍不包含真实Dedicated Server、微服务、Kubernetes或云资源。
 
 V2使用 `internal/pve` 领域链路，MySQL保存Party、ticket、proposal、Run、事件、任务、奖励和pending事实，Redis仅保存可重建投影。Run裁决不接受房主finish；逐人结算可独立重试。R3提供归档、连接配额、loopback指标、GM修复和非root镜像。
 
@@ -91,7 +91,7 @@ flowchart LR
 
 - 完整战斗服、固定 Tick 或商业级网络同步。
 - 微服务、Zinx、消息队列、Kubernetes、Agones 或服务网格。
-- 正式 React/Unity 客户端、云端环境或生产监控平台。
+- 完整商业游戏客户端、云端环境或生产监控平台；已有React/Unity控制面验证器。
 - 将本机 Day34 数据外推为商业并发能力。
 
 模块内部调用、锁、状态机、事务和失败处理见 [系统详细设计](system-design.md)。

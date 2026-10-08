@@ -11,7 +11,7 @@
 
 ### R3迁移演练补充
 
-V2编号迁移使用schema_migrations账本与文件checksum，迁移前必须生成仓库外备份并恢复到新数据库验证。`v2_backup`只允许恢复到新建 `game_realtime_v2_*_restore`，拒绝覆盖已有库/文件；`v2_migrate -stage r3`顺序检查day37—39并拒绝dirty/校验不一致。本次开发库day39已完成真实恢复副本/原库重复应用和资产/历史摘要对账，见 [R3发布记录](testing/r3-release-acceptance.md)。
+V2编号迁移使用schema_migrations账本与checksum，迁移前必须生成仓库外备份并恢复到新数据库验证。`v2_backup`只恢复到新建`game_realtime_v2_*_restore`，拒绝覆盖已有库/文件；`v2_migrate -stage r4`检查day37—40并拒绝dirty/校验不一致。本机开发库day40已有恢复副本/原库重复应用和旧事实摘要核对，见 [R4版本基线](testing/r4-release-acceptance.md)。
 
 V2 Redis投影可从MySQL重建；回滚不DROP V2表、不用旧备份覆盖已写入新奖励的活动库。维护/排空、R3兼容基线和旧匹配key清理门槛见 [R4回滚计划](design/v2-r4-retirement-and-rollback-plan.md)。当前仍无生产RPO/RTO承诺。
 
@@ -93,7 +93,7 @@ WHERE balance_after <> balance_before + delta;
 5. 启动 Go 服务并验证登录、玩家资产、GM 结算查询和排行榜边界。
 6. 记录恢复开始/结束时间、失败步骤、结果和局限。
 
-当前没有自动 migration version 表，恢复后执行增量 SQL 前必须人工确认 dump 对应结构版本。
+legacy历史没有自动迁移版本表；V2恢复后核对schema_migrations及文件checksum，再按明确版本执行工具。
 
 ## 5. Redis 持久化边界
 

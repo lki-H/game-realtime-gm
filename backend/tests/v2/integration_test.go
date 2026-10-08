@@ -275,6 +275,9 @@ func setup(t *testing.T) *fixture {
 	if _, err := database.ApplyV2Engineering(ctx, db, "../../internal/database/migrations/day39_v2_engineering.sql"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := database.ApplyV2Retirement(ctx, db, "../../internal/database/migrations/day40_v2_retirement.sql"); err != nil {
+		t.Fatal(err)
+	}
 	cache := redis.NewClient(&redis.Options{Addr: redisAddress, DB: 14})
 	t.Cleanup(func() { _ = cache.Close() })
 	if err := cache.Ping(ctx).Err(); err != nil {

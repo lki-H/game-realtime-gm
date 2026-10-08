@@ -18,7 +18,7 @@ x-document-metadata:
   status: 已实现
   scope: 当前 Go 单体服务 HTTP 路由
   fact-source: backend/internal/router/router.go 与当前 Handler
-  last-updated: 2026-10-06
+  last-updated: 2026-10-08
 servers:
   - url: http://localhost:8080
     description: 本地开发服务
@@ -801,7 +801,8 @@ paths:
       tags: [Admin Observation]
       operationId: getAdminRealtimeSummary
       summary: 查询当前单体实例的近实时摘要
-      description: 依次读取进程内 Manager、Redis 和 MySQL，不是原子快照或多实例全服指标。
+      description: 仅 GAMEPLAY_MODE=legacy 注册；V2 返回404并使用 /api/admin/v2/observations/{entity}。依次读取进程内 Manager、Redis 和 MySQL，不是原子快照或多实例全服指标。
+      x-gameplay-mode: legacy
       security:
         - AdminBearer: []
       x-error-codes:
@@ -828,6 +829,8 @@ paths:
       tags: [Admin Observation]
       operationId: getAdminPlayerObservation
       summary: 聚合观察玩家业务上下文
+      description: 仅 GAMEPLAY_MODE=legacy 注册；V2 返回404并使用V2活动或观察查询。
+      x-gameplay-mode: legacy
       security:
         - AdminBearer: []
       parameters:
@@ -1038,9 +1041,7 @@ paths:
       summary: 查询幂等操作结果
       security: [{PlayerBearer: []}]
       parameters: [{name: operation_id, in: path, required: true, schema: {type: string}}]
-      responses:
-        "200": {description: 操作结果}
-        "410": {description: code 41071，回执已归档；通过本人活动快照恢复，不重新执行原意图}
+      responses: {"200": {description: 操作结果}}
   /api/v2/recruitment:
     get:
       tags: [V2 PVE]
@@ -1109,13 +1110,8 @@ paths:
       operationId: getV2Observation
       summary: 查询 V2 只读观察数据
       security: [{AdminBearer: []}]
-      parameters:
-        - {name: entity, in: path, required: true, schema: {type: string, enum: [parties, proposals, runs, tasks, pending]}}
-        - {name: page, in: query, schema: {type: integer, minimum: 1, maximum: 10000, default: 1}}
-        - {name: page_size, in: query, schema: {type: integer, minimum: 1, maximum: 50, default: 20}}
-      responses:
-        "200": {description: data为观察列表，pagination包含page/page_size/total，observed_at为UTC查询时间}
-        "400": {description: code 40070，非法分页值被拒绝}
+      parameters: [{name: entity, in: path, required: true, schema: {type: string, enum: [parties, proposals, runs, tasks, pending]}}]
+      responses: {"200": {description: 观察列表}}
   /api/admin/v2/metrics:
     get:
       tags: [Admin V2 PVE]
@@ -1152,6 +1148,42 @@ paths:
         "409": {description: 状态或尝试版本冲突、故障未消除、同修复键不同内容}
         "429": {description: 超出入口限流，code 42970}
         "500": {description: 事务或审计失败，没有提交修复}
+
+  /api/admin/v2/control:
+    get:
+      tags: [Admin V2 PVE]
+      operationId: getV2ServiceControl
+      summary: 查询维护状态和排空进度
+      security: [{AdminBearer: []}]
+      responses:
+        "200": {description: 持久化准入状态、版本及一致快照中的票据、候选、活动Run、结算、活动锁和通知积压数量}
+        "503": {description: 状态查询不可用，不能判断已排空}
+    post:
+      tags: [Admin V2 PVE]
+      operationId: updateV2ServiceControl
+      summary: 控制新匹配和新Run准入
+      description: 仅实时复核为operator的管理员可调用。draining暂停新准入并取消未分配票据和候选，已有Run和Worker继续；closed要求先draining且所有在途计数为零；open恢复准入。状态与审计及幂等回执同事务，重启不会自动开放。
+      security: [{AdminBearer: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operation_id, admission_state, expected_version, reason]
+              properties:
+                operation_id: {type: string, minLength: 8, maxLength: 120}
+                admission_state: {type: string, enum: [open, draining, closed]}
+                expected_version: {type: integer, minimum: 1}
+                reason: {type: string, minLength: 1, maxLength: 512, description: 服务端限制512字节}
+      responses:
+        "200": {description: 状态与审计已提交；相同operation_id重试返回原回执}
+        "400": {description: 无效输入}
+        "401": {description: 管理员身份无效}
+        "403": {description: 玩家或非operator身份被拒绝}
+        "409": {description: 版本冲突、幂等键内容冲突或尚未排空}
+        "429": {description: 请求频率超过限制}
+        "503": {description: 状态或审计事务不可用，没有提交修改}
 
 components:
   securitySchemes:

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"game-realtime-gm/backend/internal/database"
 	"game-realtime-gm/backend/internal/diagnostics"
 	"game-realtime-gm/backend/internal/pve"
+	"game-realtime-gm/backend/internal/pve/control"
 	"game-realtime-gm/backend/internal/pve/task"
 	"game-realtime-gm/backend/internal/router"
 )
@@ -29,6 +31,7 @@ func main() {
 	if cfg.GameplayMode != "legacy" && cfg.GameplayMode != "v2" {
 		log.Fatal("GAMEPLAY_MODE must be legacy or v2")
 	}
+	slog.Info("gameplay mode selected", "gameplay_mode", cfg.GameplayMode)
 
 	db, err := database.NewMySQLDB(ctx, cfg.Database)
 	if err != nil {
@@ -46,6 +49,11 @@ func main() {
 		log.Fatal("database already has an active gameplay service")
 	}
 	defer owner.Close()
+	if cfg.GameplayMode == "legacy" {
+		if err := control.RequireLegacyIdle(ctx, db); err != nil {
+			log.Fatal("legacy regression requires idle V2 facts: ", err)
+		}
+	}
 
 	redisClient, err := cache.NewRedisClient(ctx, cfg.Redis)
 	if err != nil {
@@ -53,10 +61,24 @@ func main() {
 	}
 	defer redisClient.Close()
 	log.Println("redis connected")
+	var listenerShutdown sync.WaitGroup
+	listenerShutdown.Add(1)
+	go func() {
+		defer listenerShutdown.Done()
+		database.WatchGameplayOwner(ctx, owner, time.Second, func() {
+			slog.Error("gameplay database ownership lost; stopping service")
+			stop()
+		})
+	}()
 
 	if cfg.Pprof.Enabled {
+		if !diagnostics.LoopbackAddress(cfg.Pprof.Addr) {
+			log.Fatal("pprof requires an explicit loopback listener")
+		}
 		pprofServer := diagnostics.NewPprofServer(cfg.Pprof.Addr)
+		listenerShutdown.Add(1)
 		go func() {
+			defer listenerShutdown.Done()
 			<-ctx.Done()
 			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -123,7 +145,7 @@ func main() {
 	}
 	if cfg.PVE.TestEventsEnabled {
 		host, _, err := net.SplitHostPort(cfg.PVE.TestEventsAddr)
-		if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() || app == nil || len(cfg.PVE.TestEventsToken) < 24 {
+		if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() || app == nil || len(cfg.PVE.TestEventsToken) < 24 || cfg.PVE.TestEventsToken == cfg.JWTSecret {
 			log.Fatal("test events require v2 mode, loopback address and at least 24 characters of independent token")
 		}
 		internalServer := &http.Server{
@@ -135,13 +157,16 @@ func main() {
 			IdleTimeout:       30 * time.Second,
 			MaxHeaderBytes:    1 << 20,
 		}
+		listenerShutdown.Add(1)
 		go func() {
 			log.Printf("pve test event server listening on http://%s", cfg.PVE.TestEventsAddr)
 			if err := internalServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Printf("pve test event server stopped unexpectedly: %v", err)
+				stop()
 			}
 		}()
 		go func() {
+			defer listenerShutdown.Done()
 			<-ctx.Done()
 			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -150,10 +175,11 @@ func main() {
 	}
 	if cfg.PVE.MetricsEnabled {
 		host, _, err := net.SplitHostPort(cfg.PVE.MetricsAddr)
-		if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() || app == nil || len(cfg.PVE.MetricsToken) < 24 || cfg.PVE.MetricsToken == cfg.PVE.TestEventsToken {
+		if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() || app == nil || len(cfg.PVE.MetricsToken) < 24 || cfg.PVE.MetricsToken == cfg.PVE.TestEventsToken || cfg.PVE.MetricsToken == cfg.JWTSecret {
 			log.Fatal("metrics require v2, loopback address and independent service token")
 		}
 		metricsServer := &http.Server{Addr: cfg.PVE.MetricsAddr, Handler: router.NewPVEMetricsHandler(db, cfg.PVE.MetricsToken), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384}
+		listenerShutdown.Add(1)
 		go func() {
 			if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				slog.Error("pve metrics listener stopped", "error", err.Error())
@@ -161,6 +187,7 @@ func main() {
 			}
 		}()
 		go func() {
+			defer listenerShutdown.Done()
 			<-ctx.Done()
 			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -182,4 +209,5 @@ func main() {
 	}
 	<-workerDone
 	<-shutdownDone
+	listenerShutdown.Wait()
 }

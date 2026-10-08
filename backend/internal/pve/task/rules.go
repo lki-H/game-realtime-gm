@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -106,13 +107,18 @@ func Decode(reader io.Reader) (Rules, error) {
 	return rules, rules.Validate()
 }
 func (rules Rules) Validate() error {
-	if rules.Version == "" || rules.Operation == "" || rules.Difficulty == "" || rules.Duration <= 0 || rules.Reinforcements < 0 || rules.SuccessReward < 0 || rules.FailureReward < 0 || rules.AbortReward < 0 || rules.FillWait < 0 || rules.Confirmation <= 0 || rules.Loading <= 0 || rules.Reconnect <= 0 || rules.Gap <= 0 || rules.Spawn <= 0 || len(rules.Objectives) == 0 {
+	if strings.TrimSpace(rules.Version) == "" || len(rules.Version) > 64 || strings.TrimSpace(rules.Operation) == "" || len(rules.Operation) > 64 || strings.TrimSpace(rules.Difficulty) == "" || len(rules.Difficulty) > 32 || rules.Duration <= 0 || rules.Reinforcements < 0 || rules.SuccessReward < 0 || rules.FailureReward < 0 || rules.AbortReward < 0 || rules.FillWait < 0 || rules.Confirmation <= 0 || rules.Loading <= 0 || rules.Reconnect <= 0 || rules.Gap <= 0 || rules.Spawn <= 0 || len(rules.Objectives) == 0 {
 		return errors.New("invalid operation rules")
+	}
+	for _, seconds := range []int{rules.Duration, rules.FillWait, rules.Confirmation, rules.Loading, rules.Reconnect, rules.Gap, rules.Spawn} {
+		if int64(seconds) > math.MaxInt64/int64(time.Second) {
+			return errors.New("operation duration exceeds supported range")
+		}
 	}
 	validate := func(objectives []Objective) bool {
 		seen := map[string]bool{}
 		for _, objective := range objectives {
-			if strings.TrimSpace(objective.Key) == "" || len(objective.Key) > 64 || seen[objective.Key] || objective.Required <= 0 || !ValidObjectiveType(objective.Type) || (objective.Scope != "self" && objective.Scope != "team" && objective.Scope != "eligible") || (objective.Opportunity != "" && objective.Opportunity != "guaranteed" && objective.Opportunity != "conditional" && objective.Opportunity != "random") {
+			if strings.TrimSpace(objective.Key) == "" || len(objective.Key) > 64 || len(objective.TargetID) > 128 || seen[objective.Key] || objective.Required <= 0 || !ValidObjectiveType(objective.Type) || (objective.Scope != "self" && objective.Scope != "team" && objective.Scope != "eligible") || (objective.Opportunity != "" && objective.Opportunity != "guaranteed" && objective.Opportunity != "conditional" && objective.Opportunity != "random") {
 				return false
 			}
 			seen[objective.Key] = true
@@ -157,7 +163,7 @@ func (rules Rules) Validate() error {
 	}
 	definitions := map[string]Definition{}
 	for _, definition := range rules.Tasks {
-		if definition.Key == "" || len(definition.Key) > 59 || len(definition.Version) > 64 || definition.RepeatSeconds < 0 || definition.RepeatSeconds > 31536000 || definition.Reward < 0 || !validate(definition.Objectives) {
+		if strings.TrimSpace(definition.Key) == "" || len(definition.Key) > 59 || len(definition.Version) > 64 || strings.TrimSpace(definition.Operation) == "" || len(definition.Operation) > 64 || definition.RepeatSeconds < 0 || definition.RepeatSeconds > 31536000 || definition.Reward < 0 || !validate(definition.Objectives) {
 			return errors.New("invalid task")
 		}
 		if _, exists := definitions[definition.Key]; exists {

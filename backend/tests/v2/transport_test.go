@@ -222,7 +222,7 @@ func TestOpenAPILocalReferencesAndV2Paths(t *testing.T) {
 		t.Fatal(err)
 	}
 	paths := document["paths"].(map[string]any)
-	for _, path := range []string{"/api/v2/runs/{run_id}/snapshot", "/api/v2/me/activity", "/api/v2/friends", "/api/v2/operations/catalog", "/api/v2/operations/preview", "/api/v2/operations/recommendations", "/api/v2/recruitment/parties/{party_id}", "/api/v2/regroup/{proposal_id}", "/api/admin/v2/operations/{operation_id}/retry", "/api/admin/v2/observations/{entity}", "/api/admin/v2/metrics"} {
+	for _, path := range []string{"/api/v2/runs/{run_id}/snapshot", "/api/v2/me/activity", "/api/v2/friends", "/api/v2/operations/catalog", "/api/v2/operations/preview", "/api/v2/operations/recommendations", "/api/v2/recruitment/parties/{party_id}", "/api/v2/regroup/{proposal_id}", "/api/admin/v2/operations/{operation_id}/retry", "/api/admin/v2/control", "/api/admin/v2/observations/{entity}", "/api/admin/v2/metrics"} {
 		if _, exists := paths[path]; !exists {
 			t.Fatalf("missing %s", path)
 		}

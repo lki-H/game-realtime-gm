@@ -22,12 +22,7 @@ type repairRequest struct {
 
 func (handler *AdminHandler) V2Retry(c *gin.Context) {
 	adminID, ok := middleware.CurrentAdminID(c)
-	if !ok {
-		c.JSON(http.StatusForbidden, gin.H{"code": 40370, "message": "operator permission required"})
-		return
-	}
-	var role string
-	if err := handler.db.QueryRowContext(c.Request.Context(), "SELECT role FROM admins WHERE id=?", adminID).Scan(&role); err != nil || role != "operator" {
+	if !ok || middleware.CurrentAdminRole(c) != "operator" {
 		c.JSON(http.StatusForbidden, gin.H{"code": 40370, "message": "operator permission required"})
 		return
 	}
@@ -40,6 +35,14 @@ func (handler *AdminHandler) V2Retry(c *gin.Context) {
 	fingerprint := store.Hash(store.JSON(map[string]any{"admin_id": adminID, "target": target, "input": input}))
 	repairID := "repair:" + input.OperationID
 	err := store.Transaction(c.Request.Context(), handler.db, func(transaction *sql.Tx) error {
+		var runID, kind, status string
+		var attempts int
+		if err := transaction.QueryRowContext(c.Request.Context(), "SELECT aggregate_id,operation_type,status,attempts FROM pve_pending_operations WHERE operation_id=? FOR UPDATE", target).Scan(&runID, &kind, &status, &attempts); err != nil {
+			return err
+		}
+		if err := requireOperatorTx(c, transaction, adminID); err != nil {
+			return err
+		}
 		var prior []byte
 		err := transaction.QueryRowContext(c.Request.Context(), "SELECT payload FROM pve_pending_operations WHERE operation_id=?", repairID).Scan(&prior)
 		if err == nil {
@@ -52,11 +55,6 @@ func (handler *AdminHandler) V2Retry(c *gin.Context) {
 			return nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		var runID, kind, status string
-		var attempts int
-		if err := transaction.QueryRowContext(c.Request.Context(), "SELECT aggregate_id,operation_type,status,attempts FROM pve_pending_operations WHERE operation_id=? FOR UPDATE", target).Scan(&runID, &kind, &status, &attempts); err != nil {
 			return err
 		}
 		if (kind != "settlement" && kind != "task_completion") || status != "needs_repair" || attempts != input.ExpectedAttempts {
@@ -92,6 +90,9 @@ func (handler *AdminHandler) V2Retry(c *gin.Context) {
 		}
 		if errorCode(err) == 40470 {
 			status = http.StatusNotFound
+		}
+		if errors.Is(err, store.Forbidden) {
+			status = http.StatusForbidden
 		}
 		c.JSON(status, gin.H{"code": errorCode(err), "message": errorText(err)})
 		return

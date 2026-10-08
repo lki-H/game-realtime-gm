@@ -1,10 +1,20 @@
 package diagnostics
 
 import (
+	"net"
 	"net/http"
 	"net/http/pprof"
 	"time"
 )
+
+func LoopbackAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+	parsed := net.ParseIP(host)
+	return parsed != nil && parsed.IsLoopback()
+}
 
 func NewPprofServer(addr string) *http.Server {
 	mux := http.NewServeMux()

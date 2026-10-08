@@ -1,15 +1,15 @@
 # V2 PVE发布与运行指南
 
-> 文档角色：R3发布范围、实际启动配置与R4准备入口
+> 文档角色：R4发布范围、启动配置与维护/回滚入口
 > 权威级别：L1
-> 状态：本机与基于main的集成CI已验证；PR合并后复核main CI
-> 最后更新：2026-10-07
+> 状态：R4本机实施已验证；公开发布证据见R4发布记录
+> 最后更新：2026-10-08
 
 ## 发布范围
 
 V2是模块化单体控制面。MySQL保存好友房间、来源票据、候选、Run、任务、奖励和操作结果；Redis保存队列/展示投影，连接对象留在内存。好友房间与本局参战队伍分离，每局最多4人，可选个人任务，共同必需目标完成后统一结束，再逐人结算。
 
-本次发布后端及测试、双React客户端、Unity工程/Windows构建与验证脚本、本机监控配置、CI、编号迁移和契约。排除个人规则、Day/学习历史、内部交接、原始日志、备份、node_modules、Unity缓存和本机服务凭据。默认仍是 `GAMEPLAY_MODE=legacy`，R4只做退役规划，未关闭旧入口。
+本次发布后端及测试、双React客户端、Unity工程/Windows构建与验证脚本、本机监控配置、CI、编号迁移和契约。排除个人规则、Day/学习历史、内部交接、原始日志、备份、node_modules、Unity缓存和本机服务凭据。默认是 `GAMEPLAY_MODE=v2`；旧一期仅作为显式 `GAMEPLAY_MODE=legacy` 回归模式保留。
 
 ## 数据库准备
 
@@ -19,12 +19,12 @@ legacy schema初始化与V2增量迁移是两步。已有库先备份并恢复�
 cd backend
 $env:V2_MIGRATION_CONFIRM='I_UNDERSTAND_V2_MIGRATION'
 $env:GAMEPLAY_MODE='v2'
-go run ./cmd/tools/v2_migrate -stage r3
+go run ./cmd/tools/v2_migrate -stage r4
 ```
 
-执行前显式设置目标 `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME`，不要打印DSN或完整环境。工具顺序检查day37/day38/day39账本、checksum和结构；重复运行返回applied/reconciled，dirty/部分DDL/校验不一致会拒绝。day39仅新增 `pve_run_archives`，不会删除事件/资产。SQL按LF字节固定，已应用文件不做格式整理。
+执行前显式设置目标 `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME`，不要打印DSN或完整环境。工具顺序检查day37/day38/day39/day40账本、checksum和结构；重复运行返回applied/reconciled，dirty/部分DDL/校验不一致会拒绝。day40只新增维护准入和控制回执表，不删除事件/资产。SQL按LF字节固定，已应用文件不做格式整理。
 
-本次本机开发库备份恢复后补齐day39，旧2玩家/2资产/余额0及历史摘要不变。备份留在仓库外，源/恢复库均重复迁移通过；这不意味着其他环境已自动迁移。
+本次本机开发库备份恢复后补齐day39/day40，旧2玩家/2资产/余额0及历史摘要不变。备份留在仓库外，源/恢复库均重复迁移通过；这不意味着其他环境已自动迁移。
 
 ## 服务和客户端
 
@@ -57,4 +57,4 @@ Dockerfile使用Go1.27.1构建和非root distroless运行。运行容器仍需�
 
 CI在Linux执行Go普通测试/vet、真实隔离MySQL/Redis V2 race、双前端npm ci/build。本机独立测试使用23306/26379、库 `game_realtime_v2_test`、Redis DB14。不要把fixture指向开发库，CI结束后必须清理测试资源。Unity验收与Docker构建分别验证，CI绿色不代替它们。
 
-当前实例没有维护/排空API。R4停写和排空必须先设计、验证，再实际切换；不要以直接kill服务模拟正常排空。见 [R4退役与回滚](design/v2-r4-retirement-and-rollback-plan.md)。
+当前实例提供 `GET/POST /api/admin/v2/control`，operator 可按版本和稳定操作键执行 `open/draining/closed`；Worker、重连及已分配Run继续处理，排空前不能直接停止进程。旧实时观察 `/api/admin/realtime/*` 仅在 legacy 模式注册，V2 使用 `/api/admin/v2/observations/{entity}`。见 [R4实施](design/v2-r4-implementation.md)。

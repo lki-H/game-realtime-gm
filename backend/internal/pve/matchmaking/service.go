@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"game-realtime-gm/backend/internal/pve/control"
 	"game-realtime-gm/backend/internal/pve/party"
 	"game-realtime-gm/backend/internal/pve/run"
 	"game-realtime-gm/backend/internal/pve/store"
@@ -52,10 +53,8 @@ func (s *Service) Execute(ctx context.Context, transaction *sql.Tx, player int64
 	}
 	switch kind {
 	case "enqueue":
-		if input.PartyID == "" {
-			if err := store.RequireNoRecruitment(ctx, transaction, player); err != nil {
-				return nil, err
-			}
+		if err := control.RequireOpen(ctx, transaction); err != nil {
+			return nil, err
 		}
 		if input.PartyID == "" {
 			if err := store.RequireNoRecruitment(ctx, transaction, player); err != nil {
@@ -382,6 +381,12 @@ func (s *Service) Match(ctx context.Context) error {
 		if err := Lane(ctx, transaction); err != nil {
 			return err
 		}
+		if err := control.RequireOpen(ctx, transaction); err != nil {
+			if errors.Is(err, store.Maintenance) {
+				return nil
+			}
+			return err
+		}
 		rows, err := transaction.QueryContext(ctx, "SELECT t.id,t.source_party_id,t.operation_name,t.difficulty,t.fill_policy,t.allow_partial,t.queue_priority_since,p.rule_version,COALESCE(p.cohort_id,'') FROM pve_match_tickets t JOIN pve_match_ticket_plans p ON p.ticket_id=t.id WHERE t.status='queued' ORDER BY t.queue_priority_since,t.id LIMIT 100")
 		if err != nil {
 			return err
@@ -531,6 +536,14 @@ func (s *Service) Match(ctx context.Context) error {
 	})
 }
 func (s *Service) releaseTicket(ctx context.Context, transaction *sql.Tx, ticket string, requeue bool, expectedRun string) error {
+	if requeue {
+		if err := control.RequireOpen(ctx, transaction); err != nil {
+			if !errors.Is(err, store.Maintenance) {
+				return err
+			}
+			requeue = false
+		}
+	}
 	if _, err := transaction.ExecContext(ctx, "UPDATE pve_match_ticket_plans SET cohort_id=NULL WHERE ticket_id=?", ticket); err != nil {
 		return err
 	}

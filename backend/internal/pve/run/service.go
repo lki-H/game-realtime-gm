@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"game-realtime-gm/backend/internal/pve/control"
 	"game-realtime-gm/backend/internal/pve/store"
 	"game-realtime-gm/backend/internal/pve/task"
 )
@@ -80,6 +81,7 @@ type Participant struct {
 }
 type Spawn struct {
 	PlayerID int64     `json:"player_id"`
+	Deaths   int       `json:"deaths"`
 	Status   string    `json:"status"`
 	Deadline time.Time `json:"deadline"`
 }
@@ -130,6 +132,9 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (*State, er
 	return state, err
 }
 func (s *Service) CreateTx(ctx context.Context, transaction *sql.Tx, request CreateRequest) (*State, error) {
+	if err := control.RequireOpen(ctx, transaction); err != nil {
+		return nil, err
+	}
 	version := request.RuleVersion
 	if version == "" {
 		version = s.Rules.Version
@@ -247,9 +252,17 @@ func Save(ctx context.Context, transaction *sql.Tx, state *State) error {
 		if _, err := transaction.ExecContext(ctx, "UPDATE pve_run_participants SET status=?,life_status=?,left_sequence=?,updated_at=UTC_TIMESTAMP(3) WHERE participant_id=?", member.Status, member.LifeStatus, member.LeftSequence, member.ParticipantID); err != nil {
 			return err
 		}
-		if member.TaskAttemptID != "" && state.Status == "running" {
-			if _, err := transaction.ExecContext(ctx, "UPDATE pve_player_task_attempts SET status='active' WHERE id=? AND status='provisional'", member.TaskAttemptID); err != nil {
-				return err
+		if member.TaskAttemptID != "" {
+			status := ""
+			if terminal(state) {
+				status = "closed"
+			} else if state.Status == "running" {
+				status = "active"
+			}
+			if status != "" {
+				if _, err := transaction.ExecContext(ctx, "UPDATE pve_player_task_attempts SET status=? WHERE id=? AND status='provisional'", status, member.TaskAttemptID); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -300,6 +313,9 @@ func (s *Service) ApplyEvent(ctx context.Context, event Event) (*EventResult, er
 		err = transaction.QueryRowContext(ctx, "SELECT fingerprint,status FROM pve_run_events WHERE event_id=? AND run_id=?", event.EventID, event.RunID).Scan(&priorHash, &priorStatus)
 		if err == nil {
 			if priorHash != fingerprint {
+				return store.Conflict
+			}
+			if priorStatus == "rejected" {
 				return store.Conflict
 			}
 			result = &EventResult{EventID: event.EventID, Status: priorStatus, Duplicate: true, AppliedSequence: state.AppliedSequence, ReceivedSequence: state.ReceivedSequence, GapDetected: state.GapDeadline != nil, RunClosed: terminal(state)}
@@ -400,6 +416,7 @@ func (s *Service) ApplyEvent(ctx context.Context, event Event) (*EventResult, er
 				if _, updateErr := transaction.ExecContext(ctx, "UPDATE pve_run_events SET status='rejected' WHERE event_id=?", next.EventID); updateErr != nil {
 					return updateErr
 				}
+				finish(state, "event_rejected", state.AppliedSequence, now)
 				break
 			}
 			state.AppliedSequence = next.Sequence
@@ -489,19 +506,12 @@ func Apply(state *State, event Event, now time.Time) error {
 			if event.EventType == "damage" && effect.TargetPlayerID != 0 {
 				return store.Forbidden
 			}
-			if event.EventType == "damage" && effect.TargetPlayerID != 0 {
-				return store.Forbidden
-			}
 			if event.EventType != "damage" {
 				target := state.Member(&effect.TargetPlayerID)
 				if target == nil || target == member || target.Status != "participating" {
 					return store.Forbidden
 				}
-				if event.EventType == "rescue" {
-					if target.LifeStatus != "dead" && target.LifeStatus != "awaiting_respawn" {
-						return store.Conflict
-					}
-				} else if target.LifeStatus != "alive" {
+				if target.LifeStatus != "alive" {
 					return store.Forbidden
 				}
 				if event.EventType == "heal" && (effect.HealthBefore < 0 || effect.HealthAfter <= effect.HealthBefore || effect.HealthAfter > effect.HealthMaximum || effect.HealthAfter-effect.HealthBefore != effect.EffectiveAmount) {
@@ -512,7 +522,7 @@ func Apply(state *State, event Event, now time.Time) error {
 						return store.Invalid
 					}
 					spawn, exists := state.Spawns[effect.ReinforcementActionID]
-					if !exists || spawn.Status != "spawned" || spawn.PlayerID != target.PlayerID {
+					if !exists || spawn.Status != "spawned" || spawn.PlayerID != target.PlayerID || spawn.Deaths != target.Deaths {
 						return store.Conflict
 					}
 					effect.ActionID = effect.ReinforcementActionID
@@ -559,6 +569,7 @@ func Apply(state *State, event Event, now time.Time) error {
 				}
 				eligible := objective.Scope == "team" || (objective.Scope == "self" && recipient.PlayerID == member.PlayerID)
 				if objective.Scope == "eligible" {
+					eligible = recipient.PlayerID == member.PlayerID
 					for _, contributor := range event.Contributors {
 						if contributor == recipient.PlayerID {
 							eligible = true
@@ -591,13 +602,10 @@ func Apply(state *State, event Event, now time.Time) error {
 		if state.Status != "running" || !active || member.LifeStatus != "dead" || event.TargetID == "" {
 			return store.Conflict
 		}
-		if _, exists := state.Spawns[event.TargetID]; exists {
-			break
-		}
 		if state.ReinforcementUsed+pendingSpawns(state) >= state.ReinforcementBudget {
 			return store.Conflict
 		}
-		state.Spawns[event.TargetID] = Spawn{PlayerID: member.PlayerID, Status: "pending_spawn", Deadline: now.Add(time.Duration(state.Rules.Spawn) * time.Second)}
+		state.Spawns[event.TargetID] = Spawn{PlayerID: member.PlayerID, Deaths: member.Deaths, Status: "pending_spawn", Deadline: now.Add(time.Duration(state.Rules.Spawn) * time.Second)}
 		member.LifeStatus = "awaiting_respawn"
 	case "reinforcement.spawned", "reinforcement.failed":
 		spawn, exists := state.Spawns[event.TargetID]
@@ -865,6 +873,8 @@ func (state *State) ForPlayer(player int64) *State {
 			member.TaskVersion = ""
 			member.TaskPeriod = ""
 			member.TaskProgress = nil
+			member.TaskCompleted = false
+			member.Compatibility = "none"
 		}
 	}
 	return &view

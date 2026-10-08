@@ -23,6 +23,7 @@ public sealed class PveDemoPanel : MonoBehaviour
     private long planVersion = 1;
     private long selectionVersion = 1;
     private long proposalRevision = 1;
+    private long regroupRevision = 1;
     private string status = "登录后创建房间或单排。局内事实由受限事件 Bot 提供。";
     private bool busy;
     private Vector2 scroll;
@@ -46,16 +47,63 @@ public sealed class PveDemoPanel : MonoBehaviour
         status = message.ToString();
         var data = message["data"] as JObject;
         if (data == null) return;
-        if (data["id"] != null && data["members"] != null)
+        if (data["id"] != null && data["roster_version"] != null && data["members"] != null)
         {
-            partyId = (string)data["id"];
-            rosterVersion = (long)data["roster_version"];
-            planVersion = (long)data["plan_version"];
-            foreach (var member in data["members"])
-                if ((long)member["player_id"] == client.PlayerId) selectionVersion = (long)member["selection_version"];
+            RestoreParty(data, true);
         }
-        if (data["proposal_id"] != null) { proposalId = (string)data["proposal_id"]; proposalRevision = (long?)data["revision"] ?? 1; }
+        var kind = (string)message["type"] ?? "";
+        if (data["proposal_id"] != null)
+        {
+            if (kind.StartsWith("v2.party.regroup", StringComparison.Ordinal)) { regroupId = (string)data["proposal_id"]; regroupRevision = (long?)data["revision"] ?? 1; }
+            else { proposalId = (string)data["proposal_id"]; proposalRevision = (long?)data["revision"] ?? 1; }
+        }
+        if (kind == "v2.party.invited") inviteToken = (string)data["token"] ?? "";
+        if (kind == "v2.recruitment.accepted") recruitmentPartyId = (string)data["party_id"] ?? "";
         if (data["run_id"] != null) runId = (string)data["run_id"];
+    }
+    private void RestoreSelection(JToken members)
+    {
+        if (members == null) return;
+        foreach (var member in members)
+        {
+            if ((long?)member["player_id"] != client.PlayerId) continue;
+            selectionVersion = (long?)member["selection_version"] ?? 1;
+            taskKey = (string)member["task_selection"]?["task_key"] ?? "";
+            taskVersion = (string)member["task_selection"]?["task_version"] ?? ruleVersion;
+        }
+    }
+    private void RestoreParty(JObject party, bool membership)
+    {
+        if (party == null) return;
+        if (membership) partyId = (string)party["id"] ?? "";
+        rosterVersion = (long?)party["roster_version"] ?? 1;
+        planVersion = (long?)party["plan_version"] ?? 1;
+        ruleVersion = (string)party["plan"]?["rule_version"] ?? ruleVersion;
+        if (membership) RestoreSelection(party["members"]);
+    }
+    private async Task RestoreRecruitment()
+    {
+        var response = await client.Query("/api/v2/recruitment/parties/" + Uri.EscapeDataString(recruitmentPartyId));
+        var data = response["data"];
+        RestoreParty(data?["party"] as JObject, false);
+        RestoreSelection(data?["guests"]);
+        status = response.ToString();
+    }
+    private async Task RestoreActivity()
+    {
+        var response = await client.Query("/api/v2/me/activity");
+        var data = response["data"];
+        partyId = (string)data?["party"]?["id"] ?? "";
+        RestoreParty(data?["party"] as JObject, true);
+        proposalId = (string)data?["proposal"]?["id"] ?? "";
+        proposalRevision = (long?)data?["proposal"]?["revision"] ?? 1;
+        runId = (string)data?["run"]?["id"] ?? (string)data?["latest_result"]?["run_id"] ?? "";
+        var recruitment = data?["recruitment"] as JArray;
+        recruitmentPartyId = recruitment != null && recruitment.Count > 0 ? (string)recruitment[0]["party_id"] : "";
+        var regroup = data?["regroup_proposals"] as JArray;
+        regroupId = regroup != null && regroup.Count > 0 ? (string)regroup[0]["id"] : "";
+        if (!string.IsNullOrEmpty(recruitmentPartyId)) await RestoreRecruitment();
+        status = response.ToString();
     }
     private async void Invoke(Func<Task> action)
     {
@@ -74,8 +122,8 @@ public sealed class PveDemoPanel : MonoBehaviour
         GUILayout.Label("账号"); username = GUILayout.TextField(username);
         GUILayout.Label("密码"); password = GUILayout.PasswordField(password, '*');
         GUI.enabled = !busy;
-        if (GUILayout.Button("登录并连接")) Invoke(() => client.Login(username, password));
-        if (GUILayout.Button("重连")) Invoke(client.Connect);
+        if (GUILayout.Button("登录并连接")) Invoke(async () => { await client.Login(username, password); password = ""; await RestoreActivity(); });
+        if (GUILayout.Button("重连")) Invoke(async () => { await client.Connect(); await RestoreActivity(); });
         if (GUILayout.Button("创建好友房间")) Invoke(() => client.Send("v2.party.create", new { }));
         GUILayout.Label("房间 ID"); partyId = GUILayout.TextField(partyId);
         GUILayout.Label("目标玩家 ID"); peer = GUILayout.TextField(peer);
@@ -98,18 +146,18 @@ public sealed class PveDemoPanel : MonoBehaviour
         if (GUILayout.Button("拒绝候选")) Invoke(() => client.Send("v2.match.proposal_reject", new { proposal_id = proposalId, revision = proposalRevision }));
         GUILayout.Label("Run ID"); runId = GUILayout.TextField(runId);
         if (GUILayout.Button("查询当前进度 / 结算")) Invoke(async () => status = (await client.Snapshot(runId)).ToString());
-		if (GUILayout.Button("统一恢复当前活动")) Invoke(async () => status = (await client.Query("/api/v2/me/activity")).ToString());
+		if (GUILayout.Button("统一恢复当前活动")) Invoke(RestoreActivity);
 		GUILayout.Label("招募来源房间 ID"); recruitmentPartyId = GUILayout.TextField(recruitmentPartyId);
-		if (GUILayout.Button("查询招募版本与准备状态")) Invoke(async () => status = (await client.Query("/api/v2/recruitment/parties/" + Uri.EscapeDataString(recruitmentPartyId))).ToString());
-		if (GUILayout.Button("招募成员选择任务")) Invoke(() => client.Send("v2.recruitment.selection", new { party_id = recruitmentPartyId, task_key = taskKey, task_version = taskVersion }));
+		if (GUILayout.Button("查询招募版本与准备状态")) Invoke(RestoreRecruitment);
+		if (GUILayout.Button("招募成员选择任务")) Invoke(async () => { await client.Send("v2.recruitment.selection", new { party_id = recruitmentPartyId, task_key = taskKey, task_version = taskVersion }); await RestoreRecruitment(); });
 		if (GUILayout.Button("招募成员准备")) Invoke(() => client.Send("v2.recruitment.ready", new { party_id = recruitmentPartyId, ready = true, roster_version = rosterVersion, plan_version = planVersion, selection_version = selectionVersion }));
 		if (GUILayout.Button("退出招募")) Invoke(() => client.Send("v2.recruitment.leave", new { party_id = recruitmentPartyId }));
 		GUILayout.Label("续组目标玩家 ID（逗号分隔）"); regroupPlayers = GUILayout.TextField(regroupPlayers);
 		if (GUILayout.Button("发起自愿续组")) Invoke(() => client.Send("v2.party.regroup_propose", new { run_id = runId, owner_id = client.PlayerId, player_ids = Array.ConvertAll(regroupPlayers.Split(','), value => long.Parse(value.Trim())) }));
 		GUILayout.Label("续组申请 ID"); regroupId = GUILayout.TextField(regroupId);
-		if (GUILayout.Button("查询续组状态")) Invoke(async () => status = (await client.Query("/api/v2/regroup/" + Uri.EscapeDataString(regroupId))).ToString());
-		if (GUILayout.Button("同意续组")) Invoke(() => client.Send("v2.party.regroup_respond", new { proposal_id = regroupId, revision = 1, accept = true }));
-		if (GUILayout.Button("拒绝续组")) Invoke(() => client.Send("v2.party.regroup_respond", new { proposal_id = regroupId, revision = 1, accept = false }));
+		if (GUILayout.Button("查询续组状态")) Invoke(async () => { var response = await client.Query("/api/v2/regroup/" + Uri.EscapeDataString(regroupId)); regroupRevision = (long?)response["data"]?["revision"] ?? 1; status = response.ToString(); });
+		if (GUILayout.Button("同意续组")) Invoke(() => client.Send("v2.party.regroup_respond", new { proposal_id = regroupId, revision = regroupRevision, accept = true }));
+		if (GUILayout.Button("拒绝续组")) Invoke(() => client.Send("v2.party.regroup_respond", new { proposal_id = regroupId, revision = regroupRevision, accept = false }));
         GUI.enabled = true;
         GUILayout.TextArea(status);
         GUILayout.EndScrollView();

@@ -27,6 +27,7 @@ type V2Transport struct {
 	App              *pve.App
 	Secret           string
 	mu               sync.Mutex
+	lifecycle        [64]sync.Mutex
 	clients          map[int64]*v2Client
 	ctx              context.Context
 	CommandRateLimit int
@@ -101,7 +102,7 @@ func (transport *V2Transport) Auth(c *gin.Context) {
 		return
 	}
 	if err := pve.Authorize(c.Request.Context(), transport.App.DB, claims); err != nil {
-		c.AbortWithStatusJSON(403, gin.H{"code": 40321, "message": "player session revoked or unavailable"})
+		v2SessionFailure(c, err)
 		return
 	}
 	c.Set("v2_player", claims.PlayerID)
@@ -111,12 +112,23 @@ func (transport *V2Transport) Auth(c *gin.Context) {
 func V2Session(db *sql.DB, secret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, err := auth.ParseToken(secret, strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))
-		if err != nil || pve.Authorize(c.Request.Context(), db, claims) != nil {
+		if err != nil {
 			c.AbortWithStatusJSON(403, gin.H{"code": 40321, "message": "player session revoked or unavailable"})
+			return
+		}
+		if err := pve.Authorize(c.Request.Context(), db, claims); err != nil {
+			v2SessionFailure(c, err)
 			return
 		}
 		c.Next()
 	}
+}
+func v2SessionFailure(c *gin.Context, err error) {
+	if errors.Is(err, store.Forbidden) {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": 40321, "message": "player session revoked"})
+		return
+	}
+	c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"code": 50370, "message": "player session verification unavailable"})
 }
 func (transport *V2Transport) WebSocket(c *gin.Context) {
 	token := c.Query("token")
@@ -129,7 +141,7 @@ func (transport *V2Transport) WebSocket(c *gin.Context) {
 		return
 	}
 	if err := pve.Authorize(c.Request.Context(), transport.App.DB, claims); err != nil {
-		c.JSON(403, gin.H{"code": 40321, "message": "player session revoked"})
+		v2SessionFailure(c, err)
 		return
 	}
 	if !transport.reserve(claims.PlayerID, c.ClientIP()) {
@@ -151,15 +163,11 @@ func (transport *V2Transport) WebSocket(c *gin.Context) {
 	conn.SetReadLimit(16384)
 	_ = conn.SetReadDeadline(time.Now().Add(70 * time.Second))
 	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(70 * time.Second)) })
-	transport.mu.Lock()
-	if prior := transport.clients[claims.PlayerID]; prior != nil {
-		_ = prior.conn.Close()
-	}
-	transport.clients[claims.PlayerID] = client
-	delete(transport.pending, claims.PlayerID)
-	transport.mu.Unlock()
 	defer func() {
 		_ = conn.Close()
+		lifecycle := &transport.lifecycle[uint64(claims.PlayerID)%uint64(len(transport.lifecycle))]
+		lifecycle.Lock()
+		defer lifecycle.Unlock()
 		transport.mu.Lock()
 		current := transport.clients[claims.PlayerID] == client
 		if current {
@@ -174,7 +182,22 @@ func (transport *V2Transport) WebSocket(c *gin.Context) {
 			cancel()
 		}
 	}()
-	_ = transport.App.Runs.Connect(transport.ctx, claims.PlayerID, client.id, true)
+	lifecycle := &transport.lifecycle[uint64(claims.PlayerID)%uint64(len(transport.lifecycle))]
+	lifecycle.Lock()
+	transport.mu.Lock()
+	if prior := transport.clients[claims.PlayerID]; prior != nil {
+		_ = prior.conn.Close()
+	}
+	transport.clients[claims.PlayerID] = client
+	delete(transport.pending, claims.PlayerID)
+	transport.mu.Unlock()
+	connectionContext, cancelConnection := context.WithTimeout(transport.ctx, 3*time.Second)
+	err = transport.App.Runs.Connect(connectionContext, claims.PlayerID, client.id, true)
+	cancelConnection()
+	lifecycle.Unlock()
+	if err != nil {
+		return
+	}
 	done := make(chan struct{})
 	writerExited := make(chan struct{})
 	defer func() { close(done); _ = conn.Close(); <-writerExited }()
@@ -561,6 +584,8 @@ func (transport *V2Transport) resultView(ctx context.Context, state *run.State, 
 }
 func errorCode(err error) int {
 	switch {
+	case errors.Is(err, store.Maintenance):
+		return 50371
 	case errors.Is(err, store.Archived):
 		return 41071
 	case errors.Is(err, store.Invalid):

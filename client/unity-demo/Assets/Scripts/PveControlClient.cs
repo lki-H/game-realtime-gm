@@ -15,7 +15,7 @@ public sealed class PveControlClient : MonoBehaviour
     public string ServerUrl = "http://127.0.0.1:8080";
     public event Action<JObject> Received;
     public event Action<string> ConnectionStateChanged;
-    private readonly HttpClient client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+    private readonly HttpClient client = new HttpClient { Timeout = TimeSpan.FromSeconds(10), MaxResponseContentBufferSize = 1024 * 1024 };
     private readonly Queue<Action> callbacks = new Queue<Action>();
     private readonly Dictionary<string, TaskCompletionSource<JObject>> requests = new Dictionary<string, TaskCompletionSource<JObject>>();
     private readonly SemaphoreSlim connectLock = new SemaphoreSlim(1, 1);
@@ -50,13 +50,26 @@ public sealed class PveControlClient : MonoBehaviour
         try
         {
             var currentGeneration = Interlocked.Increment(ref generation);
+            RejectPending();
             var connection = new ClientWebSocket();
             connection.Options.SetRequestHeader("Authorization", "Bearer " + token);
             var address = new Uri(ServerUrl.TrimEnd('/').Replace("https://", "wss://").Replace("http://", "ws://") + "/ws");
             var previous = socket;
             socket = connection;
             previous?.Abort(); previous?.Dispose();
-            await connection.ConnectAsync(address, lifetime.Token);
+            try
+            {
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+                deadline.CancelAfter(TimeSpan.FromSeconds(10));
+                await connection.ConnectAsync(address, deadline.Token);
+                if (!Current(connection, currentGeneration)) throw new InvalidOperationException("Connection replaced");
+            }
+            catch
+            {
+                if (Current(connection, currentGeneration)) socket = null;
+                connection.Abort(); connection.Dispose();
+                throw;
+            }
             Enqueue(() => { if (Current(connection, currentGeneration)) ConnectionStateChanged?.Invoke("connected"); });
             _ = ReceiveLoop(connection, currentGeneration);
         }
@@ -67,6 +80,7 @@ public sealed class PveControlClient : MonoBehaviour
         Interlocked.Increment(ref generation);
         var previous = socket;
         socket = null;
+        RejectPending();
         previous?.Abort(); previous?.Dispose();
         Enqueue(() => ConnectionStateChanged?.Invoke("disconnected"));
         return Task.CompletedTask;
@@ -138,6 +152,7 @@ public sealed class PveControlClient : MonoBehaviour
                 {
                     received = await connection.ReceiveAsync(new ArraySegment<byte>(buffer), lifetime.Token);
                     if (received.MessageType == WebSocketMessageType.Close) return;
+                    if (received.MessageType != WebSocketMessageType.Text) throw new InvalidOperationException("Text response required");
                     payload.Write(buffer, 0, received.Count);
                     if (payload.Length > 1024 * 1024) throw new InvalidOperationException("Response too large");
                 } while (!received.EndOfMessage);
@@ -150,9 +165,37 @@ public sealed class PveControlClient : MonoBehaviour
         }
         catch (OperationCanceledException) { }
         catch (Exception failure) { Enqueue(() => { if (Current(connection, currentGeneration)) ConnectionStateChanged?.Invoke(failure.Message); }); }
-        finally { Enqueue(() => { if (Current(connection, currentGeneration)) ConnectionStateChanged?.Invoke("disconnected"); }); }
+        finally
+        {
+            if (Current(connection, currentGeneration))
+            {
+                connection.Abort();
+                RejectPending();
+                Enqueue(() => { if (Current(connection, currentGeneration)) ConnectionStateChanged?.Invoke("disconnected"); });
+            }
+        }
     }
-    private void Enqueue(Action action) { lock (callbacks) { if (callbacks.Count < 256) callbacks.Enqueue(action); } }
+    private void RejectPending()
+    {
+        lock (requests)
+        {
+            foreach (var completion in requests.Values) completion.TrySetException(new InvalidOperationException("Connection ended; reconnect and recover current activity before retrying the same operation"));
+            requests.Clear();
+        }
+    }
+    private void Enqueue(Action action)
+    {
+        lock (callbacks)
+        {
+            if (callbacks.Count >= 256)
+            {
+                callbacks.Clear();
+                callbacks.Enqueue(() => { _ = Disconnect(); ConnectionStateChanged?.Invoke("State queue exceeded capacity; reconnect and recover current activity"); });
+                return;
+            }
+            callbacks.Enqueue(action);
+        }
+    }
     private void Update() { while (true) { Action action; lock (callbacks) { if (callbacks.Count == 0) return; action = callbacks.Dequeue(); } action(); } }
-    private void OnDestroy() { destroyed = true; lifetime.Cancel(); socket?.Abort(); socket?.Dispose(); client.Dispose(); }
+    private void OnDestroy() { destroyed = true; lifetime.Cancel(); RejectPending(); socket?.Abort(); socket?.Dispose(); client.Dispose(); }
 }
