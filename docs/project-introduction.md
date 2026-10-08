@@ -2,10 +2,10 @@
 
 > 文档角色：一页式项目说明
 > 权威级别：L1（当前项目定位摘要）
-> 状态：一期已完成，持续维护
+> 状态：一期历史与V2/R4本机链路已验证
 > 适用范围：协作者、面试官与首次阅读者
 > 事实来源：当前实现、架构、契约与一期验收记录
-> 最后更新：2026-08-31
+> 最后更新：2026-10-08
 
 ## 项目目标
 
@@ -19,7 +19,7 @@
 | GM/管理员 | 管理员 HTTP API | 玩家管理、操作审计、实时观察与结算查询 |
 | 开发者 | Go CLI、Docker Compose、MySQL/Redis CLI、`ws_bot` | 启动、验证、诊断和复现实验 |
 
-React GM 后台和 Unity/C# Demo 是后续展示规划，当前一期成果不依赖它们。
+React GM/PVE网页与Unity/C#控制面已用于本机验证，不包含真实战斗模拟；默认V2提供维护排空，旧一期仅显式回归。当前发布与回滚基线见 [R4发布](testing/r4-release-acceptance.md)。
 
 ## 当前组成
 
@@ -36,11 +36,11 @@ Day27-Day35 完成了小队广播、任务会话状态机、Redis 匹配 ticket�
 ## 明确边界
 
 - 单实例、单 Go 进程，不是微服务。
-- 小队和任务会话保存在内存，服务重启后清空。
-- 匹配只实现 ticket、排队、取消和超时，没有组队撮合成功流程。
+- legacy小队/任务在内存，V2的Party/ticket/proposal/Run/任务与奖励事实在MySQL持久化。
+- V2完成整组撮合、逐人确认和分配；原legacy单人队列只作历史回归。
 - MySQL 是资产与结算事实源；Redis 排行榜是可重建投影。
 - `mission_instance` 是业务会话，不是 Dedicated Server 或逐帧战斗模拟。
-- 没有正式前端、云部署、CI/CD、Kubernetes、Zinx 或生产 SLO。
+- 已有React/Unity控制面和GitHub Actions验证；没有生产云部署、Kubernetes、Zinx或商业SLO。
 
 ## 阅读顺序
 

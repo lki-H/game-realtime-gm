@@ -33,7 +33,7 @@ jobs:
           git fetch --no-tags --depth=1 origin "$rollback_sha"
           rollback_source="$RUNNER_TEMP/r3-rollback-source"
           mkdir -p "$rollback_source"
-          git archive "$rollback_sha" | tar -x -C "$rollback_source"
+          git -C "$GITHUB_WORKSPACE" archive "$rollback_sha" | tar -x -C "$rollback_source"
           export PVE_R4_SERVER_BINARY="$RUNNER_TEMP/pve-r4-server"
           export PVE_R3_SERVER_BINARY="$RUNNER_TEMP/pve-r3-server"
           go build -o "$PVE_R4_SERVER_BINARY" ./cmd/server
