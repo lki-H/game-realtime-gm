@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"game-realtime-gm/backend/internal/pve/control"
 	"game-realtime-gm/backend/internal/pve/matchmaking"
 	"game-realtime-gm/backend/internal/pve/party"
 	"game-realtime-gm/backend/internal/pve/projection"
@@ -174,7 +175,7 @@ func (app *App) Tick(ctx context.Context) error {
 	if err := app.Match.Match(ctx); err != nil {
 		return err
 	}
-	rows, err := app.DB.QueryContext(ctx, "SELECT id FROM pve_runs WHERE status IN ('running','loading') ORDER BY created_at LIMIT 100")
+	rows, err := app.DB.QueryContext(ctx, "SELECT id FROM pve_runs WHERE status IN ('running','loading') ORDER BY updated_at,id LIMIT 100")
 	if err != nil {
 		return err
 	}
@@ -211,6 +212,9 @@ func (app *App) Tick(ctx context.Context) error {
 	return app.Projection.Rebuild(ctx)
 }
 func (app *App) Publish(ctx context.Context) error {
+	if err := control.Initialize(ctx, app.DB); err != nil {
+		return err
+	}
 	if err := app.publishRules(ctx, app.Runs.Rules); err != nil {
 		return err
 	}

@@ -224,6 +224,10 @@ func Rows(rows *sql.Rows) ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	columnTypes, err := rows.ColumnTypes()
+	if err != nil {
+		return nil, err
+	}
 	result := []map[string]any{}
 	for rows.Next() {
 		values := make([]any, len(columns))
@@ -238,7 +242,7 @@ func Rows(rows *sql.Rows) ([]map[string]any, error) {
 		for index, column := range columns {
 			value := values[index]
 			if data, ok := value.([]byte); ok {
-				if json.Valid(data) {
+				if columnTypes[index].DatabaseTypeName() == "JSON" {
 					value = json.RawMessage(data)
 				} else {
 					value = string(data)

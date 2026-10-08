@@ -196,7 +196,7 @@ range=today|last_7_days|last_30_days
 
 ## 6. GM 实时观察边界
 
-`/api/admin/realtime/summary` 和玩家观察会依次读取当前进程内存、Redis 和 MySQL：
+`/api/admin/realtime/summary` 和玩家观察仅在显式legacy模式注册，V2返回404。当前V2使用`/api/admin/v2/observations/{entity}`，维护用`GET/POST /api/admin/v2/control`；旧观察会依次读取内存、Redis和MySQL：
 
 - 连接、小队、任务来自当前 Go 进程。
 - queued ticket 来自 Redis。

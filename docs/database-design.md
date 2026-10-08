@@ -3,13 +3,13 @@
 > 文档角色：MySQL、Redis 与进程内状态的数据模型
 > 权威级别：L1（数据设计事实源）
 > 状态：已实现
-> 适用范围：一期单实例环境
+> 适用范围：legacy历史与V2/R4单实例事实
 > 事实来源：`schema.sql`、Day31 migration、SQL 查询、Redis 实现与 Manager 结构
-> 最后更新：2026-08-31
+> 最后更新：2026-10-08
 
-## V2/R3补充
+## V2/R4补充
 
-V2新增 `pve_*` 事实表并与legacy共用player_assets/asset_ledger。day37基础、day38产品、day39归档沿用编号SQL与checksum账本；`pve_run_archives`保存终态摘要、序号、指纹和事件统计。事件指纹/序号、奖励业务键、参与者结果、账本与修复审计保留，过期正文才按策略压缩。Redis使用 `v2:` 投影，不执行全库清理；旧历史不转换成Run。
+V2新增 `pve_*` 事实表并与legacy共用player_assets/asset_ledger。day37基础、day38产品、day39归档、day40维护沿用编号SQL与checksum账本；新增`pve_service_control`和`pve_control_operations`，状态、版本与幂等回执持久化。归档保留事件指纹/序号、奖励键、参与者、账本与修复审计。V2时间使用UTC，冻结legacy战绩按原Asia/Shanghai解释，不修改旧行。Redis使用`v2:`投影，仅白名单清理旧匹配key；第1—9节为legacy存储记录。见 [R4实施](design/v2-r4-implementation.md)。
 
 ## 1. 存储原则
 
@@ -189,11 +189,11 @@ MySQL 事务不包含 Redis。排行榜采用“先提交事实、后更新投�
 - `backend/internal/database/migrations/day31_settlement_assets.sql`：从 Day30 结构升级到 Day31 资产事务结构。
 - `backend/internal/database/seed.sql`：幂等创建本地管理员。
 
-当前没有 migration CLI、版本表或自动回滚。执行 SQL 前应备份并在目标环境确认当前结构；不能对未知版本重复执行增量脚本。
+legacy历史SQL没有自动账本；V2使用`cmd/tools/v2_migrate -stage r4`、schema_migrations与checksum。执行前备份恢复确认目标，dirty/校验不一致拒绝；不承诺MySQL整份DDL事务回滚。
 
 ## 9. 保留、归档与删除
 
-- 当前没有自动数据保留期限或归档任务。
+- legacy历史无自动归档；V2正文分批压缩且保留终态/去重/奖励依据，处理中的记录不压缩。
 - `asset_ledger` 和危险 GM 审计应按 append-only 思路维护。
 - 本地测试数据可以按明确玩家前缀和关联顺序清理，但不能把该流程描述成生产删除策略。
 - 备份文件、dump、日志和 profile 不提交 Git，具体见 [备份与恢复](backup-and-recovery.md)。

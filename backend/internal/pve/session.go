@@ -19,13 +19,16 @@ func SessionVersion(ctx context.Context, db *sql.DB, player int64) (int64, error
 	return revoked.UnixMilli(), err
 }
 func Authorize(ctx context.Context, db *sql.DB, claims *auth.Claims) error {
-	if claims.SubjectType != auth.SubjectTypePlayer || claims.PlayerID <= 0 {
+	if claims == nil || claims.SubjectType != auth.SubjectTypePlayer || claims.PlayerID <= 0 {
 		return store.Forbidden
 	}
 	var status string
 	err := db.QueryRowContext(ctx, "SELECT status FROM players WHERE id=?", claims.PlayerID).Scan(&status)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		return store.Forbidden
+	}
+	if err != nil {
+		return err
 	}
 	if status != "normal" {
 		return store.Forbidden

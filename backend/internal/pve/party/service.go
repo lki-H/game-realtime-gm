@@ -156,9 +156,6 @@ func (s *Service) Execute(ctx context.Context, transaction *sql.Tx, player int64
 		if err := store.RequireNoRecruitment(ctx, transaction, player); err != nil {
 			return nil, err
 		}
-		if err := store.RequireNoRecruitment(ctx, transaction, player); err != nil {
-			return nil, err
-		}
 		id := store.ID("party")
 		plan := Plan{Operation: "training_ground", Difficulty: "normal", RuleVersion: "training_ground.v1", FillPolicy: "no_fill", AllowPartial: true}
 		if _, err := transaction.ExecContext(ctx, "INSERT INTO pve_parties(id,owner_id,plan) VALUES(?,?,?)", id, player, store.JSON(plan)); err != nil {
@@ -199,9 +196,6 @@ func (s *Service) Execute(ctx context.Context, transaction *sql.Tx, player int64
 			return nil, store.Conflict
 		}
 		if err := store.RequireIdle(ctx, transaction, player); err != nil {
-			return nil, err
-		}
-		if err := store.RequireNoRecruitment(ctx, transaction, player); err != nil {
 			return nil, err
 		}
 		if err := store.RequireNoRecruitment(ctx, transaction, player); err != nil {

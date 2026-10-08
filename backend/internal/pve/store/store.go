@@ -21,6 +21,7 @@ var Conflict = errors.New("state or version conflict")
 var Forbidden = errors.New("permission denied")
 var NotFound = errors.New("resource not found")
 var Archived = errors.New("operation receipt archived; recover current activity")
+var Maintenance = errors.New("gameplay admission paused for maintenance")
 
 func ID(prefix string) string { return prefix + "_" + rand.Text() }
 func JSON(value any) []byte {

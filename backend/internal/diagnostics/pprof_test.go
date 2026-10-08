@@ -20,3 +20,16 @@ func TestNewPprofServerRegistersIndex(t *testing.T) {
 		t.Fatalf("unexpected pprof index: %s", response.Body.String())
 	}
 }
+
+func TestDiagnosticAddressRequiresExplicitLoopback(t *testing.T) {
+	for _, address := range []string{"127.0.0.1:6060", "[::1]:6060"} {
+		if !LoopbackAddress(address) {
+			t.Fatalf("loopback rejected: %s", address)
+		}
+	}
+	for _, address := range []string{"0.0.0.0:6060", ":6060", "192.168.1.2:6060", "localhost:6060", "127.0.0.1"} {
+		if LoopbackAddress(address) {
+			t.Fatalf("unsafe diagnostic address accepted: %s", address)
+		}
+	}
+}

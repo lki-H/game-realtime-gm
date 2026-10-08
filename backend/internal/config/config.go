@@ -62,15 +62,16 @@ type PVEConfig struct {
 }
 
 func Load() Config {
+	mode := getEnv("GAMEPLAY_MODE", "v2")
 	return Config{
 		AppPort:      getEnv("APP_PORT", "8080"),
-		GameplayMode: getEnv("GAMEPLAY_MODE", "legacy"),
+		GameplayMode: mode,
 		Pprof: PprofConfig{
 			Enabled: getEnvBool("PPROF_ENABLED", false),
 			Addr:    getEnv("PPROF_ADDR", "127.0.0.1:6060"),
 		},
 		Database: DatabaseConfig{
-			UTC:      getEnv("GAMEPLAY_MODE", "legacy") == "v2",
+			UTC:      mode == "v2",
 			Host:     getEnv("DB_HOST", "localhost"),
 			Port:     getEnv("DB_PORT", "3306"),
 			User:     getEnv("DB_USER", "game"),

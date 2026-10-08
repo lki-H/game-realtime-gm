@@ -5,13 +5,16 @@
 > 状态：已生效
 > 适用范围：公开仓库读者、面试官与协作者
 > 事实来源：公开权威文档清单
-> 最后更新：2026-10-07
+> 最后更新：2026-10-08
 
 ## 快速了解
 
 - [V2 PVE发布与运行指南](pve-release-guide.md)
 - [R3发布验收](testing/r3-release-acceptance.md)
 - [R4退役与回滚计划](design/v2-r4-retirement-and-rollback-plan.md)
+- [R4实施与维护控制](design/v2-r4-implementation.md)
+- [R4全面复核](testing/r4-full-review-20261008.md)
+- [R4发布与回滚基线](testing/r4-release-acceptance.md)
 - [R3发布与回滚安全边界](design/pve-release-threat-model.md)
 
 - [项目简介](project-introduction.md)

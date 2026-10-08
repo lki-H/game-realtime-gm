@@ -5,11 +5,11 @@
 > 状态：已实现
 > 适用范围：玩家长连接、小队、任务会话、匹配与结算
 > 事实来源：`handler/ws.go` 与 `ws/message.go`
-> 最后更新：2026-08-31
+> 最后更新：2026-10-06
 
 ## 1. 协议边界
 
-当前 WebSocket 用于业务控制消息和状态广播，不是逐帧战斗同步协议。本文只记录代码已经支持的消息；没有 `version` 字段、位置消息、状态同步、帧同步或未来 Dedicated Server 协议。
+WebSocket 用于业务控制消息和状态广播。第2—10节描述 legacy；第11节描述 `GAMEPLAY_MODE=v2`，其 envelope 带 `schema_version=2`。二者均不处理逐帧战斗同步。
 
 ## 2. 建立连接
 
@@ -263,23 +263,87 @@ waiting -> canceled
 4. 小队和任务会话只在当前 Go 进程内存中，服务重启后无法恢复，客户端必须允许它们不存在。
 5. 不依赖广播作为唯一事实；丢失广播后使用查询消息重新获取快照。
 
-## 11. 当前不支持
+## 11. V2 协议
+
+当 `GAMEPLAY_MODE=v2` 时，同一 `/ws` 连接仍使用 JSON，但客户端必须发送 `schema_version: 2` 且 `type` 以 `v2.` 开头。动作使用稳定 `operation_id`，服务端响应包含原 `request_id`、业务 `code` 和可查询的结果；旧 `squad.*`、`mission.*`、`matchmaking.*`、`settlement.*` 消息不进入 V2 写链路。
+
+主要消息类型：
+
+```text
+v2.social.friend_request
+v2.social.friend_response
+v2.social.message.send
+v2.social.message.read
+v2.party.create
+v2.party.invite
+v2.party.accept_invite
+v2.party.selection
+v2.party.ready
+v2.party.plan_update
+v2.party.regroup_propose
+v2.party.regroup_respond
+v2.recruitment.publish
+v2.recruitment.apply
+v2.recruitment.respond
+v2.recruitment.withdraw
+v2.match.enqueue
+v2.match.cancel
+v2.match.proposal_confirm
+v2.match.proposal_reject
+v2.recruitment.selection
+v2.recruitment.ready
+v2.recruitment.leave
+v2.task.pause
+v2.run.leave
+v2.run.reconnect
+v2.run.result
+```
+
+动作请求基本结构：
+
+```json
+{"schema_version":2,"type":"v2.party.ready","operation_id":"stable_intent_0001","request_id":"request_0001","data":{"party_id":"party_...","ready":true,"roster_version":2,"plan_version":1,"selection_version":1}}
+```
+
+`operation_id` 在同一意图重试时不变；同键不同内容返回40970。查询/重连 `v2.run.reconnect`、`v2.run.result` 不改变业务状态，可只带 `run_id`。成功响应为 `<type>.result`，包含 `schema_version/request_id/code/message/data`，业务变更通知包含其对象引用；客户端收到通知后拉取授权快照。
+
+| 动作类型 | `data` 必需字段或含义 |
+| --- | --- |
+| `v2.social.friend_request/friend_delete/block/unblock` | `player_id` |
+| `v2.social.friend_response` | `request_id`（申请ID）、`accept` |
+| `v2.social.friend_withdraw` | `request_id`（原申请ID） |
+| `v2.social.note` | `player_id`、`note`（至多128字节） |
+| `v2.social.message.send` | `player_id`、`body`（至多512字节） |
+| `v2.social.message.read` | `player_id`、`message_id`（已读水位） |
+| `v2.party.create` | `{}`，初始不准备 |
+| `v2.party.invite/transfer` | `party_id`、`player_id` |
+| `v2.party.accept_invite` | `token`，指定接收者且10分钟有效 |
+| `v2.party.join` | `party_id`，仅房主好友且friends_only |
+| `v2.party.join_policy` | `party_id`、`join_policy=invite_only/friends_only` |
+| `v2.party.leave` | `party_id`，不隐式退出Run |
+| `v2.party.selection` | `party_id`、`task_key`（空表示不绑定）、`task_version` |
+| `v2.party.plan_update` | `party_id`、`plan={operation,difficulty,rule_version,fill_policy,allow_partial,tags}` |
+| `v2.party.ready` | `party_id`、`ready`、`roster_version/plan_version/selection_version` |
+| `v2.recruitment.publish/apply/respond/withdraw` | 分别为`party_id`、`post_id`、`application_id/accept`或申请ID；接受后招募成员另用`selection/ready/leave`，不写好友成员 |
+| `v2.task.pause` | `task_key`、`task_version`；局外停用保留已确认跨局进度，running/queued时拒绝 |
+| `v2.match.enqueue` | 房主传`party_id`；不在好友房间的单排传`plan`与可选`task={task_key,task_version}` |
+| `v2.match.cancel` | `{}`，只允许未分配票据合法调用者 |
+| `v2.match.proposal_confirm/proposal_reject` | `proposal_id`、`revision` |
+| `v2.run.leave/reconnect/result` | `run_id` |
+| `v2.party.regroup_propose` | `run_id`、`owner_id`、`player_ids`、可选`plan`；已结算Run发起逐人同意 |
+| `v2.party.regroup_respond` | `proposal_id`、`revision`、`accept`；最终复核版本/占用后原子迁移 |
+
+V2业务码：40070参数、40370对象授权、40470不存在、40970状态/版本/幂等冲突、50070内部错误、50371维护暂停新准入。40321表示玩家封禁或会话撤销。40971表示在V2模式发送legacy消息/错误协议版本。内部测试错误码另在独立HTTP响应中返回，不属于玩家动作。
+
+R1 增加入站连接和逐玩家命令限流：`WS_RATE_LIMIT_PER_MINUTE` 默认30，`WS_COMMAND_RATE_LIMIT_PER_MINUTE` 默认120；重连不重置玩家命令额度。命令耗尽返回 `server.error`（code 42970），Redis 无法复核时返回50370。文本仍限制16KiB，发送队列耗尽即关闭连接；HTTP查询恢复状态。候选自动重组按 `PVE_MAX_PROPOSAL_ROUNDS` 默认8轮封顶，达到上限发送 `v2.match.paused`，data 包含 `ticket_id/reason=proposal_round_limit`；清准备后由玩家重新发起。正常回队列保留原合法等待时间。
+
+逐人结算提交后发送 `v2.participant.result`（run_id/player_id/status）；整个 Run 最终关闭后发送 `v2.run.result`。断线后先查 `/api/v2/me/activity`：无活动锁也可返回好友房间；已结算结果单独放 `latest_result`，正在等待其他成员结算的房间可返回 `settlement_run_id`。`/api/v2/runs/{run_id}/results` 在本人裁剪的 Run 字段上追加本人 `participant_result` 和 `reward_grants`，不会返回队友任务或队友奖励明细。
+
+R2 增加 `damage/heal/rescue` 受信事件：事件payload必须带唯一action_id和有效效果；治疗目标必须是其他存活参战成员且health_after-health_before等于effective_amount，救援绑定已确认的spawn动作。重复action不重复贡献；自疗、无效效果、非参战目标被拒绝。V2广播经持久化outbox生成，通知不是事实来源。断线后通过 `/api/v2/me/activity`、`/api/v2/operations/{operation_id}`、`/api/v2/regroup/{proposal_id}` 和招募快照查询恢复。Run不提供玩家finish；即时任务完成写pending并由Worker确认，区间条件到Run终态才结算。
+
+## 12. legacy 不支持的能力
 
 - 二进制消息、协议版本协商或 Protobuf。
 - 聊天、位置、输入帧、逐帧快照、预测、回滚或弱网补偿。
 - 匹配成功、跨实例房间或会话恢复。
 - 使用当前 JSON WebSocket 作为未来战斗同步协议。
-
-## 12. V2/R3控制面
-
-以上1—11节保留legacy协议范围。显式 `GAMEPLAY_MODE=v2` 时 `/ws`只接受 `schema_version=2` 和 `v2.*`。请求携带 `request_id`和稳定 `operation_id`，同意图重试不换operation_id；同键不同内容冲突40970，归档回执41071要求查询当前活动。重连/结果查询不推进业务。
-
-```json
-{"schema_version":2,"type":"v2.party.ready","request_id":"request_example","operation_id":"operation_example","data":{"party_id":"party_example","ready":true,"roster_version":2,"plan_version":1,"selection_version":1}}
-```
-
-成功响应为对应 `type.result`，包含code/message/data和request_id；主动通知不依赖客户端ACK作为资产提交条件。动作覆盖 `v2.social.*`、`v2.party.*`、`v2.recruitment.*`、`v2.match.*`、`v2.task.pause`和 `v2.run.leave/reconnect/result`，具体结构以领域Request、客户端和测试为准。房主邀请和更改局外方案，成员自己准备和选择任务；候选逐人确认，房主不能结束Run或替其他成员确认。
-
-HTTP `/api/v2/me/activity`用于丢通知后恢复当前Party/ticket/proposal/Run及本人结果；队友任务被裁剪。`/api/v2/runs/{run_id}/results`追加本人participant_result和reward_grants。原成员重连恢复同一Run/任务尝试，局内不补新玩家。
-
-V2文本上限16KiB，发送队列上限64，全局/IP连接配额默认256/64，拒绝超额握手42972；单玩家命令默认120次/分钟，超限42970、Redis无法复核50370。V2周期复核封禁和撤销，旧连接代次不能删除新连接。客户端不能发送受信loaded/kill/finish；内部事件监听不属于公共WS或OpenAPI。

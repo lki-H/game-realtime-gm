@@ -29,7 +29,20 @@ jobs:
           compose_file="$GITHUB_WORKSPACE/deploy/docker-compose.v2-test.yml"
           trap 'docker compose -p gm-ci-v2 -f "$compose_file" down -v' EXIT
           docker compose -p gm-ci-v2 -f "$compose_file" up -d --wait --wait-timeout 150
+          rollback_sha=64a4263648849586dfad9013d49a664f76181e55
+          git fetch --no-tags --depth=1 origin "$rollback_sha"
+          rollback_source="$RUNNER_TEMP/r3-rollback-source"
+          mkdir -p "$rollback_source"
+          git -C "$GITHUB_WORKSPACE" archive "$rollback_sha" | tar -x -C "$rollback_source"
+          export PVE_R4_SERVER_BINARY="$RUNNER_TEMP/pve-r4-server"
+          export PVE_R3_SERVER_BINARY="$RUNNER_TEMP/pve-r3-server"
+          go build -o "$PVE_R4_SERVER_BINARY" ./cmd/server
+          (cd "$rollback_source/backend" && go build -o "$PVE_R3_SERVER_BINARY" ./cmd/server)
           go test -race -count=1 -timeout 300s ./tests/v2
+      - name: Build service image
+        run: |
+          docker build --tag "game-realtime-gm:r4-$GITHUB_SHA" backend
+          docker image inspect --format '{{.Id}}' "game-realtime-gm:r4-$GITHUB_SHA"
   frontend:
     runs-on: ubuntu-latest
     strategy:

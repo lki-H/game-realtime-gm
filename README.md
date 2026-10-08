@@ -2,22 +2,25 @@
 
 > 文档角色：项目公开入口与快速启动
 > 权威级别：L1（导航与当前能力摘要）
-> 状态：一期与V2 R3本机/集成CI已验证；正式切换与跨机器延期
+> 状态：R4本机实施与复核已验证；共享切换与跨机器延期
 > 适用范围：本地学习、接口验证与求职展示
 > 事实来源：当前 Go 代码、路由、SQL、Docker Compose 与 Day27-Day35 验收证据
-> 最后更新：2026-10-07
+> 最后更新：2026-10-08
 
 这是一个模块化单体 Go 学习项目，围绕玩家账号、GM 管理、WebSocket 小队、任务会话、Redis 匹配、幂等结算、资产流水、排行榜和实时观察建立完整业务闭环。
 
 项目如实定位为“游戏业务后台与实时服务基础”，不是商业战斗服、微服务集群或云原生生产系统。
 
-## V2 合作PVE与R3
+## V2 合作PVE与R4
 
-新增好友房间、整组票据、逐人候选确认、共同目标/可选个人任务、受信事件、有限增援、独立结算和可靠Worker。好友房间与本局小队分开；默认仍 `GAMEPLAY_MODE=legacy`，V2需要显式设置 `v2` 并执行编号迁移，不双写旧玩法资产，不把一期历史迁成Run。
+新增好友房间、整组票据、逐人候选确认、共同目标/可选个人任务、受信事件、有限增援、独立结算和可靠Worker。好友房间与本局小队分开；默认 `GAMEPLAY_MODE=v2`，首次启动先执行 `v2_migrate -stage r4`。旧一期仅显式 `legacy` 回归，不双写旧玩法资产，不把一期历史迁成Run。
 
 - [V2发布和运行指南](docs/pve-release-guide.md)
 - [R3发布验收](docs/testing/r3-release-acceptance.md)
 - [R4退役与回滚计划](docs/design/v2-r4-retirement-and-rollback-plan.md)
+- [R4实施与维护控制](docs/design/v2-r4-implementation.md)
+- [R4复核记录](docs/testing/r4-full-review-20261008.md)
+- [R4发布版本与回滚基线](docs/testing/r4-release-acceptance.md)
 - [Unity控制面](client/unity-demo/README.md)
 
 ## 当前快照
@@ -116,6 +119,8 @@ Compose 和 seed 中的账号只供本地学习；任何共享或公网环境都
 
 ```powershell
 cd .\backend
+$env:V2_MIGRATION_CONFIRM = "I_UNDERSTAND_V2_MIGRATION"
+go run .\cmd\tools\v2_migrate -stage r4
 go run .\cmd\server
 ```
 

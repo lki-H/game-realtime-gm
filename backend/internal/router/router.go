@@ -2,8 +2,6 @@ package router
 
 import (
 	"context"
-	"errors"
-	"log"
 	"time"
 
 	"database/sql"
@@ -12,14 +10,9 @@ import (
 	"game-realtime-gm/backend/internal/config"
 	"game-realtime-gm/backend/internal/handler"
 	"game-realtime-gm/backend/internal/leaderboard"
-	"game-realtime-gm/backend/internal/matchmaking"
 	"game-realtime-gm/backend/internal/middleware"
-	"game-realtime-gm/backend/internal/mission"
 	"game-realtime-gm/backend/internal/observation"
 	"game-realtime-gm/backend/internal/pve"
-	"game-realtime-gm/backend/internal/settlement"
-	"game-realtime-gm/backend/internal/squad"
-	"game-realtime-gm/backend/internal/ws"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -40,63 +33,18 @@ func New(ctx context.Context, db *sql.DB, redisClient *redis.Client, cfg config.
 	adminHandler.Versioned = cfg.GameplayMode == "v2"
 	playerHandler := handler.NewPlayerHandler(db)
 	onlineHandler := handler.NewOnlineHandler(redisClient)
-	wsManager := ws.NewManager()
-	squadManager := squad.NewManager()
-	missionManager := mission.NewManager()
-	matchmakingManager := matchmaking.NewManager(redisClient)
-	settlementService := settlement.NewService(db, missionManager)
 	leaderboardService := leaderboard.NewService(db, redisClient)
 	leaderboardHandler := handler.NewLeaderboardHandler(leaderboardService)
-	observationService := observation.NewService(
-		db,
-		wsManager,
-		squadManager,
-		missionManager,
-		matchmakingManager,
-	)
+	observationService := observation.NewService(db, nil, nil, nil, nil)
+	if cfg.GameplayMode == "legacy" {
+		observationService = registerLegacy(ctx, r, db, redisClient, cfg.JWTSecret, leaderboardService)
+	}
 	observationHandler := handler.NewObservationHandler(
 		observationService,
 		leaderboardHandler,
 	)
 
 	r.GET("/health", handler.Health)
-	if cfg.GameplayMode != "v2" {
-		r.GET("/ws", handler.WebSocketEcho(
-			cfg.JWTSecret,
-			wsManager,
-			redisClient,
-			squadManager,
-			missionManager,
-			matchmakingManager,
-			settlementService,
-			leaderboardService,
-		))
-	}
-
-	if cfg.GameplayMode != "v2" {
-		go matchmakingManager.RunTimeoutLoop(
-			ctx,
-			time.Second,
-			func(ticket *matchmaking.Ticket) {
-				message := ws.NewServerMessage(
-					ws.MessageTypeMatchmakingStateChanged,
-					"",
-					ws.MatchmakingStateChangedData{
-						Event:  ws.MatchmakingEventTimeout,
-						Ticket: ticket,
-					},
-				)
-
-				if err := wsManager.SendToPlayer(ticket.PlayerID, message); err != nil && !errors.Is(err, ws.ErrClientNotConnected) {
-					log.Printf("websocket notify matchmaking timeout failed: player_id=%d ticket_id=%s err=%v", ticket.PlayerID, ticket.ID, err)
-				}
-			},
-			func(err error) {
-				log.Printf("matchmaking timeout cleanup failed: %v", err)
-			},
-		)
-	}
-
 	api := r.Group("/api")
 	api.POST("/register", middleware.RedisRateLimit(redisClient, "register", cfg.HTTP.AuthRateLimit, time.Minute), authHandler.Register)
 	api.POST("/login", middleware.RedisRateLimit(redisClient, "login", cfg.HTTP.AuthRateLimit, time.Minute), authHandler.Login)
@@ -138,6 +86,9 @@ func New(ctx context.Context, db *sql.DB, redisClient *redis.Client, cfg config.
 
 	adminProtected := api.Group("/admin")
 	adminProtected.Use(middleware.AdminAuth(cfg.JWTSecret))
+	if cfg.GameplayMode == "v2" {
+		adminProtected.Use(middleware.AdminSession(db))
+	}
 	adminProtected.GET("/me", adminHandler.Me)
 	adminProtected.GET("/dashboard/summary", adminHandler.DashboardSummary)
 	adminProtected.GET("/dashboard/recent-operation-logs", adminHandler.RecentOperationLogs)
@@ -148,12 +99,19 @@ func New(ctx context.Context, db *sql.DB, redisClient *redis.Client, cfg config.
 	adminProtected.GET("/operation-log-actions", adminHandler.ListOperationLogActions)
 	adminProtected.GET("/operation-logs", adminHandler.ListOperationLogs)
 	adminProtected.GET("/operation-logs/:id", adminHandler.GetOperationLogByID)
-	adminProtected.GET("/realtime/summary", observationHandler.Summary)
-	adminProtected.GET("/realtime/players/:id", observationHandler.Player)
+	if cfg.GameplayMode != "v2" {
+		adminProtected.GET("/realtime/summary", observationHandler.Summary)
+		adminProtected.GET("/realtime/players/:id", observationHandler.Player)
+	}
 	adminProtected.GET("/settlements", observationHandler.Settlements)
 	adminProtected.GET("/leaderboards/:mission_id", observationHandler.Leaderboard)
 	if cfg.GameplayMode == "v2" {
+		if len(apps) > 0 {
+			adminHandler.V2App = apps[0]
+		}
 		adminProtected.POST("/v2/operations/:operation_id/retry", middleware.RedisRateLimit(redisClient, "v2-repair", cfg.HTTP.AuthRateLimit, time.Minute), adminHandler.V2Retry)
+		adminProtected.GET("/v2/control", adminHandler.V2ControlState)
+		adminProtected.POST("/v2/control", middleware.RedisRateLimit(redisClient, "v2-control", cfg.HTTP.AuthRateLimit, time.Minute), adminHandler.V2Control)
 		adminProtected.GET("/v2/observations/:entity", handler.V2Observation(db))
 		adminProtected.GET("/v2/metrics", handler.V2Metrics(db))
 	}

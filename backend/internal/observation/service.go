@@ -9,6 +9,7 @@ import (
 
 	"game-realtime-gm/backend/internal/matchmaking"
 	"game-realtime-gm/backend/internal/mission"
+	"game-realtime-gm/backend/internal/model"
 	"game-realtime-gm/backend/internal/squad"
 	realtimews "game-realtime-gm/backend/internal/ws"
 )
@@ -113,9 +114,13 @@ func NewService(
 }
 
 func (s *Service) Summary(ctx context.Context) (*Summary, error) {
-	queued, err := s.matchmakingManager.CountQueued(ctx)
-	if err != nil {
-		return nil, err
+	var queued int64
+	if s.matchmakingManager != nil {
+		var err error
+		queued, err = s.matchmakingManager.CountQueued(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var settlements int64
@@ -126,14 +131,17 @@ func (s *Service) Summary(ctx context.Context) (*Summary, error) {
 		return nil, err
 	}
 
-	return &Summary{
-		OnlineConnections: s.wsManager.Count(),
-		Squads:            s.squadManager.Stats(),
+	summary := &Summary{
 		MatchmakingQueued: queued,
-		Missions:          s.missionManager.Stats(),
 		Settlements:       settlements,
 		ObservedAt:        time.Now(),
-	}, nil
+	}
+	if s.wsManager != nil {
+		summary.OnlineConnections = s.wsManager.Count()
+		summary.Squads = s.squadManager.Stats()
+		summary.Missions = s.missionManager.Stats()
+	}
+	return summary, nil
 }
 
 func (s *Service) Player(ctx context.Context, playerID int64) (*PlayerState, error) {
@@ -162,28 +170,30 @@ func (s *Service) Player(ctx context.Context, playerID int64) (*PlayerState, err
 		return nil, ErrPlayerAssetNotFound
 	}
 	state.SoftCurrency = softCurrency.Int64
-	state.Online = s.wsManager.IsConnected(playerID)
+	if s.wsManager != nil {
+		state.Online = s.wsManager.IsConnected(playerID)
 
-	currentSquad, err := s.squadManager.GetByPlayer(playerID)
-	if err == nil {
-		state.Squad = currentSquad
-	} else if !errors.Is(err, squad.ErrPlayerNotInSquad) && !errors.Is(err, squad.ErrSquadNotFound) {
-		return nil, err
-	}
+		currentSquad, err := s.squadManager.GetByPlayer(playerID)
+		if err == nil {
+			state.Squad = currentSquad
+		} else if !errors.Is(err, squad.ErrPlayerNotInSquad) && !errors.Is(err, squad.ErrSquadNotFound) {
+			return nil, err
+		}
 
-	currentMission, err := s.missionManager.GetByPlayer(playerID)
-	if err == nil {
-		state.Mission = currentMission
-	} else if !errors.Is(err, mission.ErrMissionNotFound) {
-		return nil, err
-	}
+		currentMission, err := s.missionManager.GetByPlayer(playerID)
+		if err == nil {
+			state.Mission = currentMission
+		} else if !errors.Is(err, mission.ErrMissionNotFound) {
+			return nil, err
+		}
 
-	ticket, err := s.matchmakingManager.GetByPlayer(ctx, playerID)
-	if err == nil {
-		state.Matchmaking = ticket
-		state.Matching = ticket.Status == matchmaking.StatusQueued
-	} else if !errors.Is(err, matchmaking.ErrTicketNotFound) {
-		return nil, err
+		ticket, err := s.matchmakingManager.GetByPlayer(ctx, playerID)
+		if err == nil {
+			state.Matchmaking = ticket
+			state.Matching = ticket.Status == matchmaking.StatusQueued
+		} else if !errors.Is(err, matchmaking.ErrTicketNotFound) {
+			return nil, err
+		}
 	}
 
 	latestSettlement, err := s.latestSettlement(ctx, playerID)
@@ -309,5 +319,6 @@ func scanSettlement(source scanner) (*SettlementItem, error) {
 	if err != nil {
 		return nil, err
 	}
+	item.CreatedAt = model.LegacyDatetime(item.CreatedAt)
 	return &item, nil
 }

@@ -5,11 +5,13 @@
 > 状态：一期基线已建立，持续补充
 > 适用范围：当前 Go 单体服务与本地/测试环境
 > 事实来源：需求、自动测试、Day27-Day35 验收与 Day34 性能记录
-> 最后更新：2026-08-31
+> 最后更新：2026-10-08
 
-## V2/R3发布验证
+## V2/R4发布验证
 
 `backend/tests/v2` 使用独立MySQL/Redis和 `PVE_INTEGRATION=1` 验证迁移、Party、proposal、Run、任务、事件、结算、Worker、资产对账和投影重建。GitHub Actions另外运行Go普通测试/vet、Linux `go test -race`和双前端干净构建；Unity Player、GM修复、备份恢复和soak作为单独证据，不混作CI覆盖。跨机器、长时弱网和商业容量仍未验证。
+
+R4新增维护/排空、并发控制/修复回执、权限撤销竞态、legacy时间、101个Run轮转、数据库锁丢失及缓存白名单回归。CI设置R4/R3二进制路径，实际进程经HTTP重放及Worker恢复验证资产，不接受回滚测试SKIP作为证据。清单见 [R4复核](testing/r4-full-review-20261008.md)。
 
 ## 1. 测试目标
 

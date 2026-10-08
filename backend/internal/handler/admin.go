@@ -11,6 +11,7 @@ import (
 
 	"game-realtime-gm/backend/internal/middleware"
 	"game-realtime-gm/backend/internal/model"
+	"game-realtime-gm/backend/internal/pve"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -20,6 +21,7 @@ type AdminHandler struct {
 	db          *sql.DB
 	redisClient *redis.Client
 	Versioned   bool
+	V2App       *pve.App
 }
 
 type banPlayerRequest struct {
@@ -36,6 +38,9 @@ type operationLogActionOption struct {
 }
 
 var operationLogActionOptions = []operationLogActionOption{
+	{Value: "admin.v2.control.open", Label: "恢复 PVE 准入"},
+	{Value: "admin.v2.control.draining", Label: "排空 PVE 服务"},
+	{Value: "admin.v2.control.closed", Label: "关闭 PVE 准入"},
 	{
 		Value: "admin.players.list",
 		Label: "查询玩家列表",

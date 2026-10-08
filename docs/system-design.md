@@ -1,15 +1,15 @@
 # 系统详细设计（LLD）
 
-## V2/R3当前补充
+## V2/R4当前补充
 
-默认legacy链路继续保留；显式V2装配 `internal/pve`，房主只管理局外好友房间。匹配票据锁定名单/方案/任务版本，MySQL裁决最终Run；玩家不能注入受信完成事实。Run保存规则快照和事件指纹/代次/序号，Worker轮询pending/outbox，operator只可在修复needs_repair原因后重试。归档默认关闭，稳定去重键不删除。
+默认V2装配 `internal/pve`，legacy只显式回归。房主只管理局外好友房间，票据锁定名单/方案/任务版本，MySQL裁决Run；玩家不能注入受信完成事实。Worker轮询pending/outbox，operator重试与维护权限在事务内复核，稳定回执和审计同事务。准入状态持久化为open/draining/closed，匹配与Run创建持共享锁，维护持排他锁；活动Run按最近维护时间轮转，数据库锁丢失触发停止。第1—11节保留legacy设计，V2当前边界见 [R4实施](design/v2-r4-implementation.md)。
 
 > 文档角色：当前模块调用、状态机、并发、事务、缓存与失败处理
 > 权威级别：L1（LLD 事实源）
 > 状态：已实现
-> 适用范围：一期 Go 单体服务内部设计
+> 适用范围：legacy历史与V2/R4内部设计
 > 事实来源：`backend/cmd/server` 与 `backend/internal` 当前代码
-> 最后更新：2026-08-31
+> 最后更新：2026-10-08
 
 ## 1. 启动顺序
 
