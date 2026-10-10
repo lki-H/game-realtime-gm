@@ -13,6 +13,7 @@
 - 全面复核修复 JWT 过期 WS、坏 outbox 批次阻塞、加载失败 Party 回队列、成员拉黑绕过、客户端迟到身份响应和任务尝试终态；新增回归、GM outbox 观察与 OpenAPI 实体。
 - 本机 MySQL/Redis/RabbitMQ、Linux race、React 浏览器/构建、Unity Windows 构建均通过；跨机器、真实 DS、HA 和商业容量继续延期。远程 CI 以发布后的实际 Actions 结果为准。
 - 详情：[R5 验收](testing/r5-m6-acceptance.md)、[全面复核](testing/20261010-full-review.md)、[模块说明](../experiments/r5-m6/README.md)。
+- 首轮PR的主项目与R5独立CI已success，含真实存储/race和实际旧版本回滚；提交与最终版本追踪见 [R5发布基线](testing/r5-release-acceptance.md)。
 
 ## R4 维护、默认V2与复核修复
 

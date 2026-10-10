@@ -47,6 +47,7 @@
 - [R5 独立模块与操作说明](../experiments/r5-m6/README.md)
 - [R5 实验设计](design/r5-m6-experiment-plan.md)
 - [R5/M6 实施验收](testing/r5-m6-acceptance.md)
+- [R5 公开发布与版本基线](testing/r5-release-acceptance.md)
 - [2026-10-10 全面复核与修复](testing/20261010-full-review.md)
 - [R5 实验安全分析](design/r5-m6-threat-model.md)
 - [R5 架构决策](adr/0012-independent-rpc-mq-experiment.md)
