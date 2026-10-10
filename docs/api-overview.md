@@ -43,7 +43,7 @@ Authorization: Bearer <admin-token>
 
 - 玩家受保护接口：缺少/格式错误/无效 token 分别返回 `40102/40103/40104`，管理员 token 返回 `40301`。
 - 管理员接口：缺少/格式错误/无效 token 分别返回 `40112/40113/40114`，玩家 token 返回 `40311`。
-- JWT 当前有效期为 24 小时；没有刷新 token 或主动撤销机制。
+- JWT 当前有效期为 24 小时，没有刷新 token。V2 对玩家状态和会话代次复核，封禁后旧 HTTP、WS 和重连被拒绝；legacy历史接口按其原鉴权边界限用。
 
 ## 3. 路由清单
 
@@ -52,6 +52,7 @@ Authorization: Bearer <admin-token>
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | GET | `/health` | 检查 Go HTTP 进程是否响应 |
+| GET | `/ready` | 检查 MySQL/Redis 与进程生命周期就绪 |
 | POST | `/api/register` | 注册玩家并创建零余额资产行 |
 | POST | `/api/login` | 玩家登录 |
 | POST | `/api/admin/login` | 管理员登录 |
