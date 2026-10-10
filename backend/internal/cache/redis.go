@@ -2,6 +2,8 @@ package cache
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"game-realtime-gm/backend/internal/config"
 
@@ -9,10 +11,16 @@ import (
 )
 
 func NewRedisClient(ctx context.Context, cfg config.RedisConfig) (*redis.Client, error) {
+	if cfg.PoolSize <= 0 || cfg.MaxActiveConns < cfg.PoolSize || cfg.PoolTimeoutMS <= 0 {
+		return nil, errors.New("invalid Redis connection budget")
+	}
 	client := redis.NewClient(&redis.Options{
-		Addr:     cfg.Addr,
-		Password: cfg.Password,
-		DB:       cfg.DB,
+		PoolSize:       cfg.PoolSize,
+		MaxActiveConns: cfg.MaxActiveConns,
+		PoolTimeout:    time.Duration(cfg.PoolTimeoutMS) * time.Millisecond,
+		Addr:           cfg.Addr,
+		Password:       cfg.Password,
+		DB:             cfg.DB,
 	})
 
 	if err := client.Ping(ctx).Err(); err != nil {

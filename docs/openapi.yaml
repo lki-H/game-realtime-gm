@@ -18,7 +18,7 @@ x-document-metadata:
   status: 已实现
   scope: 当前 Go 单体服务 HTTP 路由
   fact-source: backend/internal/router/router.go 与当前 Handler
-  last-updated: 2026-10-08
+  last-updated: 2026-10-10
 servers:
   - url: http://localhost:8080
     description: 本地开发服务
@@ -55,6 +55,35 @@ paths:
               example:
                 code: 0
                 message: ok
+
+  /ready:
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      summary: 服务就绪检查
+      description: 一秒共同预算内检查 MySQL 和 Redis；服务生命周期取消后返回 503。仅反映依赖可达与进程生命周期，不表示允许新匹配或商业容量。
+      security: []
+      responses:
+        "200":
+          description: 生命周期有效且依赖可达
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example: {code: 0, message: ok}
+        "503":
+          description: 依赖不可达或服务正在停止；不返回内部错误
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example: {code: 50301, message: service not ready}
 
   /api/register:
     post:
@@ -149,7 +178,7 @@ paths:
               $ref: "#/components/schemas/AdminLoginRequest"
             example:
               username: admin
-              password: <development-password>
+              password: local-development-password
       x-error-codes:
         - {status: 400, code: 40011, message: invalid request}
         - {status: 401, code: 40111, message: username or password is wrong}

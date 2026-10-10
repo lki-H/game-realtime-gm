@@ -3,9 +3,9 @@
 > 文档角色：面向开发与学习的 HTTP 调用说明
 > 权威级别：L2（人类阅读指南）
 > 状态：已实现
-> 适用范围：当前 27 条 HTTP 路由
+> 适用范围：当前公共 HTTP、V2 查询和管理接口
 > 事实来源：`openapi.yaml`、Router 与 Handler
-> 最后更新：2026-08-31
+> 最后更新：2026-10-10
 
 完整方法、参数、schema、安全方案和每个操作的业务错误码以 [OpenAPI 3.1](openapi.yaml) 为准。本文只保留便于手工调用和理解的流程，不复制完整字段定义。WebSocket 见 [WebSocket 协议](ws-protocol.md)。
 
@@ -196,7 +196,7 @@ range=today|last_7_days|last_30_days
 
 ## 6. GM 实时观察边界
 
-`/api/admin/realtime/summary` 和玩家观察仅在显式legacy模式注册，V2返回404。当前V2使用`/api/admin/v2/observations/{entity}`，维护用`GET/POST /api/admin/v2/control`；旧观察会依次读取内存、Redis和MySQL：
+`/api/admin/realtime/summary` 和玩家观察仅在显式 `GAMEPLAY_MODE=legacy` 注册，V2返回404。V2使用 `/api/admin/v2/observations/{entity}`，维护状态使用 `/api/admin/v2/control`。旧实时观察依次读取当前进程内存、Redis 和 MySQL：
 
 - 连接、小队、任务来自当前 Go 进程。
 - queued ticket 来自 Redis。
@@ -216,3 +216,15 @@ range=today|last_7_days|last_30_days
 | 分页结果意外 | 实现会对非法值回退默认并将 page_size 截断为上限 |
 
 每个操作的精确业务错误码可在 [OpenAPI](openapi.yaml) 的 `x-error-codes` 查看。
+
+## 8. V2 使用入口
+
+设置 `GAMEPLAY_MODE=v2` 并完成 V2 迁移后，玩家动作走 `/ws` 的 `v2.*` 消息，查询走 `/api/v2/*`。`operation_id` 在同一次动作重试中保持不变；未知执行结果可从 `/api/v2/operations/{operation_id}` 查回。个人任务可选，不兼容绑定允许参战但不累计任务。
+
+`/api/v2/parties/{party_id}/snapshot` 与 `/api/v2/runs/{run_id}/snapshot` 按成员/历史参与者授权；不向队友暴露完整个人任务选择和进度。好友、私聊、未读、招募、任务目录也提供 HTTP 查询。管理员通过 `/api/admin/v2/observations/{entity}` 查看 parties/proposals/runs/tasks/pending，通过 `/api/admin/v2/metrics` 读取 Prometheus 文本。
+
+内部事件入口只在独立 loopback 端口启用，默认关闭；公共 HTTP/WS 与 GM 页面都没有事件写入能力。隔离运行和演示命令见 [V2 运行指南](pve-release-guide.md)。
+
+## 9. 活性与就绪
+
+`GET /health` 只证明 HTTP 进程能响应。`GET /ready` 在一秒共同预算内检查 MySQL/Redis，生命周期取消或依赖故障时返回 503/code=50301，恢复后返回 200。就绪不代表维护状态允许新匹配；准入以 V2 control 为准。本机验收用 `APP_HOST=127.0.0.1` 限定主监听。

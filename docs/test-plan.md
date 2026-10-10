@@ -7,12 +7,6 @@
 > 事实来源：需求、自动测试、Day27-Day35 验收与 Day34 性能记录
 > 最后更新：2026-10-10
 
-## V2/R4发布验证
-
-`backend/tests/v2` 使用独立MySQL/Redis和 `PVE_INTEGRATION=1` 验证迁移、Party、proposal、Run、任务、事件、结算、Worker、资产对账和投影重建。GitHub Actions另外运行Go普通测试/vet、Linux `go test -race`和双前端干净构建；Unity Player、GM修复、备份恢复和soak作为单独证据，不混作CI覆盖。跨机器、长时弱网和商业容量仍未验证。
-
-R4新增维护/排空、并发控制/修复回执、权限撤销竞态、legacy时间、101个Run轮转、数据库锁丢失及缓存白名单回归。CI设置R4/R3二进制路径，实际进程经HTTP重放及Worker恢复验证资产，不接受回滚测试SKIP作为证据。清单见 [R4复核](testing/r4-full-review-20261008.md)。
-
 ## 1. 测试目标
 
 验证身份边界、状态机、幂等资产事务、Redis 投影、GM 观察和并发保护；同时保留可复现环境、命令、结果与局限。前端规划不替代后端测试。
@@ -76,6 +70,7 @@ E1-E4 报告应记录机器、代码版本、配置、数据量、命令、持�
 | 用例 ID | 需求 | 场景 | 预期 |
 | --- | --- | --- | --- |
 | `TC-OPS-001` | REQ-OPS-01 | `GET /health` | 200、`code=0`、响应头有 request ID |
+| `TC-OPS-002` | REQ-OPS-01 | `GET /ready` | 依赖正常为 200；MySQL/Redis 故障或生命周期取消为 503，响应不暴露内部细节 |
 | `TC-AUTH-001` | REQ-AUTH-01 | 新用户名注册 | 201；玩家和零余额资产行同时存在 |
 | `TC-AUTH-002` | REQ-AUTH-01 | 重复用户名 | 409、`40901`；无重复资产行 |
 | `TC-AUTH-003` | REQ-AUTH-02 | 正确/错误密码、封禁登录 | 分别 200、40101、40321 |
@@ -136,7 +131,7 @@ docker run --rm `
 
 Day34 已建立本机回环 E3 基线：8 客户端冒烟和 20 客户端、10000 echo 短时运行均记录 0 失败，连接关闭后 goroutine 回落。公开证据摘要见 [一期成果](phase1-summary.md)。
 
-后续对比必须保持机器、Go 版本、代码版本、服务配置和 `ws_bot` 参数一致。尚未验证：公网延迟、弱网、长时间 soak、多实例、数据库高负载或容量上限。
+后续对比必须保持机器、Go 版本、代码版本、服务配置和负载参数一致。V2长运行以 [M7持续运行报告](performance/m7-local-soak.md) 的实际结果为准；公网延迟、弱网、多实例、数据库高负载和容量上限另验。
 
 ## 9. 安全测试
 
@@ -144,8 +139,10 @@ Day34 已建立本机回环 E3 基线：8 客户端冒烟和 20 客户端、1000
 - WebSocket query token 不进入访问日志。
 - SQL 特殊字符只作为参数，不改变查询结构。
 - 超长昵称、原因、request ID、匹配字段、nonce 和 idempotency key。
-- 未登录连接洪泛、登录暴力尝试和 HTTP 大 body 当前应记录为待加固用例，而不是已通过控制。
+- 未登录连接的大规模洪泛、分布式登录暴力尝试仍应记录为待容量验证；基础限制的证据见下一项。
+- R1 的本地 HTTP body、鉴权入口/WS握手/玩家命令限流、转发头绕过、发送队列耗尽和operator修复授权已加入专项自动测试；完整公网/长连接洪泛仍待 R3。
 - pprof 默认关闭且只在明确启用时绑定 loopback。
+- R4最新复核、故障回归与浏览器证据见 [R4全面复核](testing/r4-full-review-20261008.md)。
 
 风险优先级见 [安全设计](security-design.md)。
 
@@ -175,6 +172,16 @@ Day34 已建立本机回环 E3 基线：8 客户端冒烟和 20 客户端、1000
 
 ## 12. V2 验收入口
 
+M7综合退出结果见 [本机综合验收](testing/m7-acceptance.md)，阶段总结见 [二期成果](phase2-summary.md)。新增readiness、真实HTTP双管理员状态迁移、取消/确认期限并发回归；旧缺陷按V2修复或legacy限用分类，不声称旧学习包全部重写。
+
+M7后增量复核见 [最新复核](testing/post-m7-audit-20261010.md)。post_m7_audit_test.go覆盖好友申请重复/额度/拉黑交错及邀请目标，cmd/server测试防止所有权连接耗尽启动容量；Unity验收文件读取/写入原子性与保留现有场景经当前Player联调验证。
+
 2026-10-10复核增加 `review_20261010_test.go`，覆盖JWT时间、已建立WS过期、异常outbox隔离/排空、加载失败回队列、成员拉黑及不兼容/永久退出任务尝试终态。R5增加poison redelivery死信和过期已确认消息去重；完整复核证据见 [本轮记录](testing/20261010-full-review.md)。
 
 R5 的独立模块验收另见 [RPC/MQ 验收](testing/r5-m6-acceptance.md)，不由主 `backend/go test ./...` 自动覆盖。`experiments/r5-m6/deploy/verify.ps1` 验证真实备份恢复、只读 SQL 权限、服务身份/deadline、confirm/ACK/重投/死信/冲突、晚提交回查、投影重建、实际进程崩溃、broker/数据库重启以及主链路故障隔离；Linux race 包含真实 MySQL/RabbitMQ。普通无依赖单元测试中的 Integration SKIP 必须如实标注。
+
+V2 集成测试位于 `backend/tests/v2`，使用独立 Compose、数据库 `game_realtime_v2_test`、Redis DB14，需 `PVE_INTEGRATION=1`。用例覆盖四人不同任务/无任务/不兼容、好友票据与公共补位、确认拒绝/超时、加载回退、可信事件重复/乱序/缺口/旧来源、增援竞争、失败/中止、退出/重连、Worker/重启、资产对账和投影重建。
+
+`TestFourWebSocketsWithInternalHTTPAndResultRecovery` 使用四个真实 WS、内部 HTTP、自动结算和结果查询，并验证管理员封禁、踢线、握手拒绝与只读指标。`TestOpenAPILocalReferencesAndV2Paths` 校验 YAML、本地引用与核心 V2 路径。Linux race 包含真实集成用例；React 模拟接口浏览器测试与 Unity Editor 未验证单独记录，不混作真实游戏联调。当前证据见 [V2 验收记录](pve-release-guide.md)。
+
+R1 新增 `migration_test.go`、`r1_test.go` 和 `r1_boundaries_test.go`：独立 `game_realtime_v2_migration_test` 验证legacy资产/历史/时间保留、空库、重复/篡改/部分DDL/失败和索引损坏；业务隔离库验证逐人失败恢复、operator幂等审计、组合快照隐私、禁用版本、准备失效/取消、满队/不补位、候选轮次/旧回调、水位回滚和模拟死锁重试。测试不申请SUPER，不弱化数据库安全配置。资源耗尽测试是针对性拒绝检查，不能作为容量上限。

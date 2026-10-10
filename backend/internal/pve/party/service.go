@@ -342,8 +342,11 @@ func (s *Service) Execute(ctx context.Context, transaction *sql.Tx, player int64
 		}
 		return Load(ctx, transaction, party.ID)
 	case "invite":
-		if input.PlayerID <= 0 || len(party.Members) >= 4 {
+		if input.PlayerID <= 0 || Contains(party, input.PlayerID) || len(party.Members) >= 4 {
 			return nil, store.Invalid
+		}
+		if err := store.LockPlayers(ctx, transaction, []int64{input.PlayerID}); err != nil {
+			return nil, err
 		}
 		blocked, err := store.Blocked(ctx, transaction, player, input.PlayerID)
 		if err != nil {

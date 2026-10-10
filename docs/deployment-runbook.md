@@ -5,11 +5,28 @@
 > 状态：适用于本地/测试环境
 > 适用范围：Windows + Docker Desktop + 宿主机 Go 服务
 > 事实来源：当前配置加载、Docker Compose、schema、seed 与 pprof 实现
-> 最后更新：2026-10-10
+> 最后更新：2026-10-11
+
+## R3 本机新增运行项
+
+- V2本机服务可开启 `PVE_ARCHIVE_ENABLED=true`、`PVE_ARCHIVE_RETENTION_DAYS`、`PVE_ARCHIVE_BATCH_SIZE`；归档只处理已终态、已结算、无活动占用和无待处理操作的Run，默认关闭。
+- 指标服务通过 `PVE_METRICS_ENABLED=true`、loopback `PVE_METRICS_ADDR` 和独立 `PVE_METRICS_TOKEN` 开启；该token不等于测试事件token，Prometheus只通过Bearer读取。不要绑定公网地址。
+- `WS_MAX_CONNECTIONS` 和 `WS_MAX_CONNECTIONS_PER_IP` 限制连接资源；替换同一玩家连接仍然允许，超额连接返回42972。
+- 本机监控使用 `deploy/docker-compose.monitoring.yml`、`deploy/monitoring/prometheus.example.yml` 和Grafana provisioning文件；Prometheus/Grafana只绑定127.0.0.1，发布前必须替换临时密码和token。
+- 四个Unity Player本机验收使用 `deploy/verify-r3-unity.ps1`，它要求隔离V2配置、临时密码和独立事件token；脚本不会向项目文件写密码。
+- Dockerfile和CI锁定Go 1.27.1；本机Go/React验证和`game-realtime-gm:r3-local`镜像构建通过。Docker Desktop使用Clash Verge的Allow LAN及手动代理访问Docker Hub；共享环境应使用受控代理，不要把本机代理地址写进仓库。
+
+## R3 本机新增运行项
+
+- V2本机服务可开启 `PVE_ARCHIVE_ENABLED=true`、`PVE_ARCHIVE_RETENTION_DAYS`、`PVE_ARCHIVE_BATCH_SIZE`；归档只处理已终态、已结算、无活动占用和无待处理操作的Run，默认关闭。
+- 指标服务通过 `PVE_METRICS_ENABLED=true`、loopback `PVE_METRICS_ADDR` 和独立 `PVE_METRICS_TOKEN` 开启；该token不等于测试事件token，Prometheus只通过Bearer读取。不要绑定公网地址。
+- `WS_MAX_CONNECTIONS` 和 `WS_MAX_CONNECTIONS_PER_IP` 限制连接资源；替换同一玩家连接仍然允许，超额连接返回42972。
+- 本机监控使用 `deploy/docker-compose.monitoring.yml`、`deploy/monitoring/prometheus.example.yml` 和Grafana provisioning文件；Prometheus/Grafana只绑定127.0.0.1，发布前必须替换临时密码和token。
+- 四个Unity Player本机验收使用 `deploy/verify-r3-unity.ps1`，它要求隔离V2配置、临时密码和独立事件token；脚本不会向项目文件写密码。
 
 ## 1. 运行模型
 
-MySQL/Redis由Docker Compose运行，Go可在宿主机或非root镜像启动，Prometheus/Grafana只作本机监控。默认V2必须先执行`v2_migrate -stage r4`检查day37—40；停服先由operator排空并确认closed。legacy沿用后文显式回归流程，无TLS/Kubernetes或自动生产部署。配置与事件/指标隔离见 [PVE指南](pve-release-guide.md)。
+当前只有 MySQL 和 Redis 运行在 Docker Compose 中；Go 服务在宿主机通过 `go run` 或本地二进制启动。没有 Go Dockerfile、反向代理、TLS、Kubernetes、Helm、Ingress、HPA 或自动部署。
 
 依赖顺序：
 
@@ -43,6 +60,10 @@ Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
 | 变量 | 当前默认/用途 | 共享环境要求 |
 | --- | --- | --- |
 | `APP_PORT` | `8080`，HTTP 与 WebSocket | 选择明确端口 |
+| `APP_HOST` | 空值，沿用所有网卡 | 本机验收设 `127.0.0.1`；容器内按端口映射需要选择 |
+| `DB_MAX_OPEN_CONNS/DB_MAX_IDLE_CONNS` | `20/10` | 玩法服务open至少2（一条所有权、一条业务）；idle允许0，不能超过open |
+| `REDIS_POOL_SIZE/REDIS_MAX_ACTIVE_CONNS` | `10/20` | base池与硬连接上限；不能只设PoolSize而允许额外连接无限扩张 |
+| `REDIS_POOL_TIMEOUT_MS` | `1000` | 池耗尽等待预算；必须为正，故障请求不无限等空闲连接 |
 | `DB_HOST` / `DB_PORT` | `localhost:3306` | 指向受控 MySQL |
 | `DB_USER` / `DB_PASSWORD` / `DB_NAME` | 本地开发连接 | 必须通过 Secret 覆盖 |
 | `REDIS_ADDR` / `REDIS_PASSWORD` / `REDIS_DB` | `localhost:6379` / 空 / 0 | 按环境隔离并鉴权 |
@@ -121,6 +142,8 @@ go run .\cmd\server
 Invoke-RestMethod http://localhost:8080/health
 ```
 
+`/health` 只检查 HTTP 活性；`GET /ready` 在共同一秒预算内检查 MySQL/Redis，且进程生命周期有效才返回 200，否则返回 503/code=50301。探针不返回密码、连接地址或原始依赖错误，不代表新匹配准入已开启；维护/排空使用原有控制面状态。服务启动先完成事实恢复再监听，因此启动期间不会提前就绪。
+
 健康检查只证明 HTTP 进程响应。再执行登录、在线或 GM 摘要，才能覆盖 MySQL/Redis 业务链路。
 
 ## 7. pprof
@@ -150,7 +173,7 @@ profile、goroutine dump 和运行日志保存在仓库外，不提交 Git。ppr
 
 ## 8. 停止与重启
 
-Go 服务：在运行终端按 `Ctrl+C`。当前服务没有完整信号驱动优雅关闭，活跃连接会中断。
+Go 服务：在运行终端按 `Ctrl+C`。服务执行信号驱动的优雅关闭，先停止接收新请求并关闭 Worker/WS；仍需等待终止日志，不能把进程强杀当作正常停止。
 
 停止依赖但保留容器和数据：
 
@@ -231,13 +254,21 @@ MySQL 结算成功但 Redis 同步失败时，资产仍然有效。使用同一�
 
 ## 11. 当前不具备
 
-- Go 服务镜像、镜像仓库、自动构建或部署流水线。
+- 自动部署流水线及生产镜像仓库；已有本机构建镜像与GitHub Actions测试流水线。
 - systemd/Windows Service 守护、Kubernetes probes、自动扩缩容。
 - TLS、域名、反向代理、可信代理配置和公网安全基线。
-- Prometheus/Grafana/OpenTelemetry、集中日志和告警。
+- 共享环境Prometheus/Grafana、外部告警通知、OpenTelemetry和集中日志；已有本机指标采集与告警规则。
 - 蓝绿/金丝雀、自动回滚、HA MySQL/Redis 或跨区域灾备。
 
 备份与恢复步骤见 [备份与恢复](backup-and-recovery.md)，安全发布前置条件见 [安全设计](security-design.md)。
+
+## 12. R1 V2 本地迁移与资源配置
+
+V2启动前在明确目标库执行 `go run ./cmd/tools/v2_migrate -stage r4`（backend目录），需要 `DB_*` 与 `V2_MIGRATION_CONFIRM=I_UNDERSTAND_V2_MIGRATION`。工具与玩法服务共享数据库排他锁，运行中的服务会阻止迁移。已有dirty/错误checksum/不完整schema不得直接再跑SQL；先按备份恢复说明处理。day40增加持久化维护准入和幂等控制；默认模式为v2，旧模式只作为显式回归。
+
+R2 day38 已在本机开发库完成备份恢复副本验证后执行，`day37_v2_pve_foundation` 与 `day38_v2_product_model` 均为 applied；R4 day40 已在恢复副本和本机开发库验证并应用。后续环境仍需独立备份恢复副本和停写窗口；执行 `go run ./cmd/tools/v2_migrate -stage r4` 会按顺序重复校验day37—40。R2/R4新表不修改legacy资产/历史，失败按迁移账本处理。
+
+新增配置：`HTTP_MAX_BODY_BYTES=1048576`、`AUTH_RATE_LIMIT_PER_MINUTE=20`、`WS_RATE_LIMIT_PER_MINUTE=30`、`WS_COMMAND_RATE_LIMIT_PER_MINUTE=120`、`PVE_MAX_PROPOSAL_ROUNDS=8`，V2启动要求正值。Gin拒绝默认信任转发头；若未来加反向代理，必须显式配置受信代理。operator修复入口无需启用内部事件监听，普通gm只读；详见OpenAPI和 [维护与回退实施](design/v2-r4-implementation.md)。
 
 ## 13. R5 独立实验运行
 

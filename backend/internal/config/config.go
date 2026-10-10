@@ -6,6 +6,7 @@ import (
 )
 
 type Config struct {
+	AppHost      string
 	AppPort      string
 	GameplayMode string
 	Pprof        PprofConfig
@@ -26,18 +27,23 @@ type HTTPConfig struct {
 }
 
 type DatabaseConfig struct {
-	Host     string
-	Port     string
-	User     string
-	Password string
-	Name     string
-	UTC      bool
+	MaxOpenConns int
+	MaxIdleConns int
+	Host         string
+	Port         string
+	User         string
+	Password     string
+	Name         string
+	UTC          bool
 }
 
 type RedisConfig struct {
-	Addr     string
-	Password string
-	DB       int
+	PoolSize       int
+	MaxActiveConns int
+	PoolTimeoutMS  int
+	Addr           string
+	Password       string
+	DB             int
 }
 
 type PprofConfig struct {
@@ -64,6 +70,7 @@ type PVEConfig struct {
 func Load() Config {
 	mode := getEnv("GAMEPLAY_MODE", "v2")
 	return Config{
+		AppHost:      getEnv("APP_HOST", ""),
 		AppPort:      getEnv("APP_PORT", "8080"),
 		GameplayMode: mode,
 		Pprof: PprofConfig{
@@ -71,17 +78,22 @@ func Load() Config {
 			Addr:    getEnv("PPROF_ADDR", "127.0.0.1:6060"),
 		},
 		Database: DatabaseConfig{
-			UTC:      mode == "v2",
-			Host:     getEnv("DB_HOST", "localhost"),
-			Port:     getEnv("DB_PORT", "3306"),
-			User:     getEnv("DB_USER", "game"),
-			Password: getEnv("DB_PASSWORD", "game123456"),
-			Name:     getEnv("DB_NAME", "game_realtime"),
+			MaxOpenConns: getEnvInt("DB_MAX_OPEN_CONNS", 20),
+			MaxIdleConns: getEnvInt("DB_MAX_IDLE_CONNS", 10),
+			UTC:          mode == "v2",
+			Host:         getEnv("DB_HOST", "localhost"),
+			Port:         getEnv("DB_PORT", "3306"),
+			User:         getEnv("DB_USER", "game"),
+			Password:     getEnv("DB_PASSWORD", "game123456"),
+			Name:         getEnv("DB_NAME", "game_realtime"),
 		},
 		Redis: RedisConfig{
-			Addr:     getEnv("REDIS_ADDR", "localhost:6379"),
-			Password: getEnv("REDIS_PASSWORD", ""),
-			DB:       getEnvInt("REDIS_DB", 0),
+			PoolSize:       getEnvInt("REDIS_POOL_SIZE", 10),
+			MaxActiveConns: getEnvInt("REDIS_MAX_ACTIVE_CONNS", 20),
+			PoolTimeoutMS:  getEnvInt("REDIS_POOL_TIMEOUT_MS", 1000),
+			Addr:           getEnv("REDIS_ADDR", "localhost:6379"),
+			Password:       getEnv("REDIS_PASSWORD", ""),
+			DB:             getEnvInt("REDIS_DB", 0),
 		},
 		JWTSecret: getEnv("JWT_SECRET", "game-realtime-dev-secret"),
 		PVE: PVEConfig{

@@ -5,11 +5,7 @@
 > 状态：学习环境基线；公网部署前需加固
 > 适用范围：当前 Go HTTP/WebSocket、MySQL、Redis 与本地运维
 > 事实来源：认证中间件、JWT、Handler、SQL、访问日志、pprof、Compose 与测试
-> 最后更新：2026-10-10
-
-## V2/R4安全补充
-
-V2逐请求/周期复核玩家状态和撤销代次；GM重试与维护在事务内锁住管理员角色，防止等待期间权限撤销。可信事件/指标默认关闭、只绑定loopback且不得复用JWT密钥，pprof启用时强制loopback IP；WS有配额和有界队列。锁归属丢失停止服务，资产唯一键和事务保护奖励，归档保留去重依据。下文一期风险是历史基线，当前新增边界见 [发布威胁模型](design/pve-release-threat-model.md)，共享/公网仍需TLS和身份加固。
+> 最后更新：2026-10-11
 
 ## 1. 范围与假设
 
@@ -53,15 +49,15 @@ flowchart LR
 | Request ID | 已实现 | 字符/长度校验后响应与日志关联，不参与鉴权 |
 | HTTP 日志脱敏 | 已实现 | 访问日志只记录 path，不记录 raw query 或 body |
 | WebSocket 消息限制 | 已实现 | 文本 JSON、4096 字节、读写期限、ping/pong 和写锁 |
-| HTTP body/header/timeout 限制 | 已知缺口 | 主 HTTP server 未配置完整 timeout、`MaxHeaderBytes` 或 body 上限 |
-| 登录/接口限流 | 已知缺口 | 没有暴力破解、连接洪泛或昂贵查询限流 |
+| HTTP body/header/timeout 限制 | 已实现本机基线 | 主 HTTP server 配置读写/首部超时、`MaxHeaderBytes` 与全局 body 上限；共享入口仍需容量验证 |
+| 登录/接口限流 | 已实现本机基线 | Redis 计数覆盖登录/注册、WS握手和命令；昂贵查询与共享入口仍需容量验证 |
 | CORS | 当前未启用 | API 没有 CORS 中间件；未来浏览器前端需明确 allowlist |
 | WebSocket Origin | 已知风险 | `CheckOrigin` 当前无条件允许；依赖 bearer query token，不依赖 cookie |
 | 可信代理/客户端 IP | 已知风险 | 尚未配置受信代理范围，审计 IP 不能作为独立安全证据 |
 | TLS | 环境外 | 本地 HTTP/WS；公网必须由受控入口提供 TLS/WSS |
-| pprof 隔离 | 部分实现 | 默认关闭、默认 loopback；配置可被误设为非本机地址 |
+| pprof 隔离 | 已实现本机边界 | 默认关闭，启用时强制显式loopback IP；共享/公网身份治理仍未实现 |
 | Secret 管理 | 已知风险 | 支持环境变量，但代码/Compose 有本地开发回退值 |
-| token 撤销/刷新 | 未实现 | token 固定 24 小时；被盗后有效期内不能主动撤销 |
+| token 撤销/刷新 | V2 已实现撤销复核 | V2 封禁/会话代次会拒绝旧 HTTP、WS 和重连；没有通用 refresh token，legacy历史接口仍按原24小时边界 |
 | 依赖漏洞扫描 | 未实现 | 没有 `govulncheck`/Dependabot/CI 证据 |
 
 ## 4. 鉴权与授权
@@ -76,7 +72,7 @@ flowchart LR
 
 ### WebSocket
 
-升级前从 query 读取 player token；管理员 token 被拒绝。同玩家新连接替换旧连接，但这不是 token 撤销机制。当前 `CheckOrigin=true`，未来浏览器场景必须同时重新设计 Origin allowlist 和 token 传递。
+legacy 升级前从 query 读取 player token；V2 控制面支持 Authorization 握手并复核会话代次，管理员 token 被拒绝。同玩家新连接替换旧连接。当前学习环境仍保留兼容的宽 Origin 检查；共享/公网部署前必须配置 Origin allowlist、短期握手凭据和 TLS/WSS。
 
 ## 5. 输入、输出与敏感数据
 
@@ -97,7 +93,7 @@ flowchart LR
 | `TM-003` | 攻击者获得 URL 中 token 后，在 24 小时内重放 WebSocket；恶意站点可跨 Origin 发起连接 | player subject 校验、访问日志不记 query、重复连接替换 | query token、`CheckOrigin=true`、无撤销 | 本地低；浏览器公网中 / 高 | 高：改握手鉴权、Origin allowlist、短期 WS ticket、撤销/轮换 |
 | `TM-004` | 慢请求、大 body/header、连接洪泛或昂贵分页/扫描耗尽 goroutine、CPU、内存 | WS 4096 字节与超时；分页有上限；Recovery | HTTP server timeout/header/body limit 与全局限流缺失 | 可访问端口时中 / 中高 | 高：补 HTTP timeouts、body/header limits、连接/路由限流和资源指标 |
 | `TM-005` | 任一管理员 token 执行封禁/解封或查看审计/观察信息 | admin subject、危险操作事务审计 | role 未执行授权，token 被盗无法撤销 | 当前单管理员低 / 高 | 中：定义权限矩阵并在中间件/Handler 强制；审计失败告警 |
-| `TM-006` | pprof 被误绑定公网，泄露调用栈、内存和运行信息或被滥用消耗资源 | 默认关闭且默认 `127.0.0.1`、独立 mux | 配置没有强制 loopback、没有认证 | 本地低 / 高 | 中：生产禁用或网络隔离并校验监听地址 |
+| `TM-006` | pprof 泄露调用栈、内存和运行信息或被滥用消耗资源 | 默认关闭、启用时强制显式loopback IP、独立 mux | 本机仍没有pprof独立身份认证 | 本地低 / 高 | 共享部署前禁用或增加网络/身份隔离 |
 | `TM-007` | 已登录玩家枚举自增 ID并读取全体玩家状态/封禁原因 | 需要玩家 JWT；不返回密码 hash | 玩家列表/详情暴露字段较宽、ID 可枚举 | 中 / 中 | 中：按真实产品需求缩减字段和可见范围，避免公开封禁 detail |
 | `TM-008` | 窃取的 24 小时 JWT持续访问；改密或封禁不会立即使已签发 token 失效 | exp、subject 隔离；封禁只在登录时检查 | 无 jti、撤销表、token version 或短 access token | 中 / 中高 | 中：短期 access token + revocation/version；受保护请求按风险复核账号状态 |
 | `TM-009` | Redis 排行同步失败导致榜单滞后，或客户端利用重复请求反复触发修复路径 | MySQL 先提交、UNIQUE 幂等、Redis Lua | 无 Outbox/自动重建/异常指标 | 低 / 低（资产不受影响） | 低：增加重建命令、失败指标与对账；保持 MySQL 为事实源 |
@@ -121,17 +117,29 @@ flowchart LR
 
 ## 8. 公网前置清单
 
-以下均为后续要求，不是当前已实现能力：
+以下区分现有控制与共享/公网部署仍需追加的门槛：
 
 - 强制外部 Secret，移除/拒绝共享环境开发默认值，轮换管理员 seed。
 - TLS/WSS、可信代理配置、明确 CORS 与 WebSocket Origin allowlist。
-- 主 HTTP server 的 read header/read/write/idle timeout、header/body 上限。
-- 登录、注册、WebSocket 连接和昂贵查询限流；异常指标与告警。
-- 管理员细粒度授权、token 撤销/短期 access token和更强管理员认证。
+- 主HTTP超时及header/body上限已经实现；共享环境仍需代理/入口预算和慢请求容量验证。
+- 登录、注册、WebSocket握手/命令基础限流已经实现；昂贵查询、分布式流量与告警按共享负载另验。
+- 管理员细粒度授权、refresh token/短期 access token 和更强管理员认证。
 - `govulncheck`、Secret 扫描、依赖更新和可审查构建流程。
 - 数据最小化、备份加密、审计保留规则和恢复演练。
 
 CSRF 当前不是 Bearer Authorization API 的主要风险；若未来改用 cookie 身份，必须重新设计 SameSite、Secure、HttpOnly 和 CSRF 防护。
+
+## 9. V2 已实现控制与残余风险
+
+V2 校验玩家状态与会话撤销版本；封禁事务写撤销记录，连接每两秒复核，旧 JWT 和重新握手被拒绝。JWT 仅接受 HS256。房主没有 finish 或踢参战者能力，好友/私聊/招募/加入依据资源授权和拉黑关系，不靠房间 ID 证明邀请权限。个人任务快照按本人裁剪。
+
+测试事件必须通过独立 loopback 监听器、独立 token、`pve_event_bot` 来源、Run 路径、代次和序号；主 HTTP 没有该路由。授权来源仍只代表测试驱动，不能证明真实命中或反作弊。WS 文本上限16KiB、发送队列64条，满队列关闭慢连接；事件乱序窗口128，事实对象上限10000。私聊正文512字节、每分钟30条、好友申请每分钟20条，查询有界。规则不执行任意脚本，日志不写密码、token 或私聊正文。
+
+R1 已增加本地登录/注册/管理员登录、WS握手/玩家命令限流与全局body上限；Redis Lua原子计数和过期，耗尽42970、无法核验50370。Gin默认不信任转发头，伪造X-Forwarded-For不能刷新额度。满发送队列关闭连接和目标洪泛分支已有测试；M7形成30分钟本机soak基线，仍不证明公网容量。
+
+结算修复 API 实时读取 `admins.role`，只有 `operator` 可重试 needs_repair；普通gm仍只读、旧角色JWT不绕过授权。资产关系未修复、目标版本冲突或审计写失败时整笔拒绝；请求不含金额、SQL或游戏事件。同修复键指纹防重放。该权限是这一个新入口的限制，不代表既有GM全部功能已经完成RBAC。
+
+迁移工具与游戏进程共享同库named lock，拒绝不停写的DDL；backup读取容器凭据环境，避免密码参数，拒绝覆盖文件和已有恢复库。备份仍需仓库外访问控制，不具备自动加密、异地灾备或生产凭据治理。legacy仍按回归卡限用；完整管理权限、生产服务身份、保留合规和容量控制留后续。V2单实例写入锁不代表多实例设计。
 
 ## 10. R5 实验安全控制
 
@@ -140,3 +148,5 @@ R5 RPC/MQ 的身份和数据库/MQ 账号独立，禁止使用玩家或 GM JWT�
 消息包含明确来源、版本、时效和规范化 payload hash；完整 envelope fingerprint 防同 ID 改内容，唯一 Run 报表防重复计数。报告不发奖，任何消息失联/重投/死信均不改主资产。凭据只在仓库外受限目录；启停脚本核对进程路径和启动时间、只清理专用项目资源。当前 loopback 明文只适用于已确认的个人本机环境；完整威胁、证据和外网前置条件见 [R5 威胁模型](design/r5-m6-threat-model.md)。
 
 2026-10-10 复核补充：V2玩家JWT会话复核强制当前有效exp并拒绝未来nbf，已建立WebSocket的每条命令和定期校验同样检查。好友房间加入校验所有现有成员的拉黑关系。坏通知进入needs_repair并在outbox观察显示，不阻塞其他通知；排空与修复指标包含这些记录。R5已落库、fingerprint匹配的过期重投只ACK去重；未知/变更的过期消息仍隔离。quorum主报告队列的投递超限启用至少一次dead-letter，避免多次进程崩溃后静默丢弃。
+
+M7后复核补充：好友额度按成功命令回执计数，撤回/重发同一对象不能绕过一分钟20次；不同operation重复pending不产生新通知，原operation幂等重试保留。成对社交操作锁住双方玩家并重新核验申请状态，防拉黑/接受交错重建关系。房间邀请拒绝自身/已有成员及不存在/封禁目标。玩法服务启动要求MySQL open>=2，避免所有权连接独占唯一容量导致无法启动。结果和残余范围见 [最新复核](testing/post-m7-audit-20261010.md)。

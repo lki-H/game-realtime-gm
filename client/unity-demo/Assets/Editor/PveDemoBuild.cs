@@ -16,8 +16,11 @@ public static class PveDemoBuild
         output = Path.GetFullPath(output);
         Directory.CreateDirectory(Path.GetDirectoryName(output));
         Directory.CreateDirectory("Assets/Scenes");
-        var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
-        if (!EditorSceneManager.SaveScene(scene, "Assets/Scenes/PveControl.unity")) throw new InvalidOperationException("Scene save failed");
+        if (!File.Exists("Assets/Scenes/PveControl.unity"))
+        {
+            var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
+            if (!EditorSceneManager.SaveScene(scene, "Assets/Scenes/PveControl.unity")) throw new InvalidOperationException("Scene save failed");
+        }
         var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
         {
             scenes = new[] { "Assets/Scenes/PveControl.unity" },

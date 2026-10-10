@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	"game-realtime-gm/backend/internal/config"
@@ -11,6 +12,9 @@ import (
 )
 
 func NewMySQLDB(ctx context.Context, cfg config.DatabaseConfig) (*sql.DB, error) {
+	if cfg.MaxOpenConns <= 0 || cfg.MaxIdleConns < 0 || cfg.MaxIdleConns > cfg.MaxOpenConns {
+		return nil, errors.New("invalid MySQL connection budget")
+	}
 	location, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
 		return nil, err
@@ -38,8 +42,8 @@ func NewMySQLDB(ctx context.Context, cfg config.DatabaseConfig) (*sql.DB, error)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(20)
-	db.SetMaxIdleConns(10)
+	db.SetMaxOpenConns(cfg.MaxOpenConns)
+	db.SetMaxIdleConns(cfg.MaxIdleConns)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)

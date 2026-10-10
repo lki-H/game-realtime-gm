@@ -45,6 +45,7 @@ func New(ctx context.Context, db *sql.DB, redisClient *redis.Client, cfg config.
 	)
 
 	r.GET("/health", handler.Health)
+	r.GET("/ready", handler.Readiness(ctx, db, redisClient))
 	api := r.Group("/api")
 	api.POST("/register", middleware.RedisRateLimit(redisClient, "register", cfg.HTTP.AuthRateLimit, time.Minute), authHandler.Register)
 	api.POST("/login", middleware.RedisRateLimit(redisClient, "login", cfg.HTTP.AuthRateLimit, time.Minute), authHandler.Login)

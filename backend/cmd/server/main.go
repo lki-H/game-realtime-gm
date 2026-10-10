@@ -31,6 +31,9 @@ func main() {
 	if cfg.GameplayMode != "legacy" && cfg.GameplayMode != "v2" {
 		log.Fatal("GAMEPLAY_MODE must be legacy or v2")
 	}
+	if err := validateGameplayConnectionBudget(cfg); err != nil {
+		log.Fatal(err)
+	}
 	slog.Info("gameplay mode selected", "gameplay_mode", cfg.GameplayMode)
 
 	db, err := database.NewMySQLDB(ctx, cfg.Database)
@@ -135,7 +138,7 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:              ":" + cfg.AppPort,
+		Addr:              net.JoinHostPort(cfg.AppHost, cfg.AppPort),
 		Handler:           r,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -203,11 +206,18 @@ func main() {
 		_ = srv.Shutdown(shutdown)
 	}()
 
-	log.Println("server listening on :" + cfg.AppPort)
+	log.Println("server listening on " + srv.Addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 	<-workerDone
 	<-shutdownDone
 	listenerShutdown.Wait()
+}
+
+func validateGameplayConnectionBudget(cfg config.Config) error {
+	if cfg.Database.MaxOpenConns < 2 {
+		return errors.New("DB_MAX_OPEN_CONNS must allow the gameplay owner and at least one application connection")
+	}
+	return nil
 }
