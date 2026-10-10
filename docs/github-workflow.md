@@ -96,7 +96,7 @@ git status -sb
 - README、相对链接、Mermaid 和 OpenAPI 在 GitHub 可读。
 - 公开树中不存在私人目录/文件。
 - GitHub 默认分支与预期一致。
-- 如有 Actions，只报告真实检查结果；当前项目没有正式 CI 流水线，不得写成已自动部署。
+- 当前 GitHub Actions 包含主项目与独立 R5 两套工作流；逐项核对最终 PR head 和合并 main 的真实结果。CI 验证不表示自动部署。
 
 ## 8. 提交表达
 

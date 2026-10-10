@@ -2,7 +2,7 @@
 
 > 权威级别：L2（版本与远程验收证据）
 > 日期：2026-10-10，Asia/Shanghai
-> 状态：代码、本机验收与首轮 PR CI 通过；最终合并状态见 PR
+> 状态：R5已合并到main，最终PR及合并main的全部CI通过
 
 ## 发布范围
 
@@ -28,3 +28,11 @@ R5 模块、固定版本、账号/视图边界与启停命令见 [模块说明](
 停止四个实验角色即可回退实验，主单体不需增加 RPC/MQ 配置。主玩法回滚保留 [R4回滚约束](../design/v2-r4-retirement-and-rollback-plan.md) 和已审核 R3 SHA `64a4263648849586dfad9013d49a664f76181e55`，不得用旧备份覆盖活动资产。
 
 跨机器、M7 长时运行、真实战斗服、DS、多实例、HA、生产传输保护和商业容量仍独立延期。本次是源码和验证证据发布，不是生产上线。
+
+## 最终合并与 main 结果
+
+- 最终PR head为 `c5d60ef41c018555322b7800ee23af8a5f9e1afd`，主PR [38055525115](https://github.com/lki-H/game-realtime-gm/actions/runs/38055525115)、R5 PR [38055525117](https://github.com/lki-H/game-realtime-gm/actions/runs/38055525117)和对应push均completed/success，77个公开文件经白名单审查。
+- PR #3于2026-10-10 21:26:40 Asia/Shanghai合并，main提交 `bfd6f284bc04d91f5354ec5382f35c24e0c91dfd`；main文件树与审核过的PR head一致。
+- main主项目 [run 38055734806](https://github.com/lki-H/game-realtime-gm/actions/runs/38055734806)和R5 [run 38055734817](https://github.com/lki-H/game-realtime-gm/actions/runs/38055734817)全部completed/success。R5真实MySQL/RabbitMQ race4.668秒，broker停止前后主资产对账均0差异；后端真实存储race、固定R3实际进程回滚、双前端与C#构建运行成功。
+- main CI本地构建镜像ID为 `sha256:a789f7da1540b9c667ab3b2cea28377a93511c805c53ec8ace91ab05fbb46fa8`；这是CI本地image ID，没有推送镜像registry或部署服务。
+- 此节在源技术文档补记最终证据；公开main内的发布记录通过PR和Actions链接追踪最终状态。源工作区和既有开发数据保留，没有pull/reset覆盖。

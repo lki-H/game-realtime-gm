@@ -30,10 +30,15 @@ func (s *Service) Execute(ctx context.Context, transaction *sql.Tx, player int64
 	if peer == player {
 		return nil, store.Invalid
 	}
+	if peer > 0 {
+		if err := lockPeer(ctx, transaction, peer); err != nil {
+			return nil, err
+		}
+	}
 	switch kind {
 	case "friend_request":
 		var recent int
-		if err := transaction.QueryRowContext(ctx, "SELECT COUNT(*) FROM pve_social_friend_requests WHERE requester_id=? AND updated_at>UTC_TIMESTAMP(3)-INTERVAL 1 MINUTE", player).Scan(&recent); err != nil {
+		if err := transaction.QueryRowContext(ctx, "SELECT COUNT(*) FROM pve_command_results WHERE player_id=? AND action='v2.social.friend_request' AND created_at>UTC_TIMESTAMP(3)-INTERVAL 1 MINUTE", player).Scan(&recent); err != nil {
 			return nil, err
 		}
 		if recent >= 20 {
@@ -56,6 +61,13 @@ func (s *Service) Execute(ctx context.Context, transaction *sql.Tx, player int64
 		if friends {
 			return nil, store.Conflict
 		}
+		var pending int
+		if err := transaction.QueryRowContext(ctx, "SELECT COUNT(*) FROM pve_social_friend_requests WHERE requester_id=? AND recipient_id=? AND status='pending'", player, peer).Scan(&pending); err != nil {
+			return nil, err
+		}
+		if pending > 0 {
+			return nil, store.Conflict
+		}
 		if _, err := transaction.ExecContext(ctx, "INSERT INTO pve_social_friend_requests(requester_id,recipient_id,status) VALUES(?,?,'pending') ON DUPLICATE KEY UPDATE status='pending',updated_at=UTC_TIMESTAMP(3)", player, peer); err != nil {
 			return nil, err
 		}
@@ -68,11 +80,26 @@ func (s *Service) Execute(ctx context.Context, transaction *sql.Tx, player int64
 	case "friend_response", "friend_withdraw":
 		var requester, recipient int64
 		var status string
-		err := transaction.QueryRowContext(ctx, "SELECT requester_id,recipient_id,status FROM pve_social_friend_requests WHERE id=? FOR UPDATE", input.RequestID).Scan(&requester, &recipient, &status)
+		err := transaction.QueryRowContext(ctx, "SELECT requester_id,recipient_id FROM pve_social_friend_requests WHERE id=?", input.RequestID).Scan(&requester, &recipient)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, store.NotFound
 		}
 		if err != nil {
+			return nil, err
+		}
+		peer = requester
+		if kind == "friend_withdraw" {
+			if requester != player {
+				return nil, store.Forbidden
+			}
+			peer = recipient
+		} else if recipient != player {
+			return nil, store.Forbidden
+		}
+		if err := lockPeer(ctx, transaction, peer); err != nil {
+			return nil, err
+		}
+		if err := transaction.QueryRowContext(ctx, "SELECT status FROM pve_social_friend_requests WHERE id=? FOR UPDATE", input.RequestID).Scan(&status); err != nil {
 			return nil, err
 		}
 		if status != "pending" {
@@ -187,6 +214,15 @@ func (s *Service) Execute(ctx context.Context, transaction *sql.Tx, player int64
 	default:
 		return nil, store.NotFound
 	}
+}
+
+func lockPeer(ctx context.Context, transaction *sql.Tx, player int64) error {
+	var id int64
+	err := transaction.QueryRowContext(ctx, "SELECT id FROM players WHERE id=? FOR UPDATE", player).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return store.NotFound
+	}
+	return err
 }
 
 func (s *Service) Query(ctx context.Context, player int64, kind string, peer int64) (any, error) {

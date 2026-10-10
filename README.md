@@ -2,42 +2,36 @@
 
 > 文档角色：项目公开入口与快速启动
 > 权威级别：L1（导航与当前能力摘要）
-> 状态：R5本机实现与首轮远程PR检查通过；共享切换与跨机器延期
+> 状态：二期本机验收完成；M7 发布状态见版本基线，跨机器延期
 > 适用范围：本地学习、接口验证与求职展示
-> 事实来源：当前 Go 代码、路由、SQL、Docker Compose 与 Day27-Day35 验收证据
+> 事实来源：当前 Go 代码、路由、SQL、Compose、M7 与历次验收证据
 > 最后更新：2026-10-10
 
 这是一个模块化单体 Go 学习项目，围绕玩家账号、GM 管理、WebSocket 小队、任务会话、Redis 匹配、幂等结算、资产流水、排行榜和实时观察建立完整业务闭环。
 
 项目如实定位为“游戏业务后台与实时服务基础”，不是商业战斗服、微服务集群或云原生生产系统。
 
-## V2 合作PVE与R4
+## V2 合作 PVE 入口
 
-新增好友房间、整组票据、逐人候选确认、共同目标/可选个人任务、受信事件、有限增援、独立结算和可靠Worker。好友房间与本局小队分开；默认 `GAMEPLAY_MODE=v2`，首次启动先执行 `v2_migrate -stage r4`。旧一期仅显式 `legacy` 回归，不双写旧玩法资产，不把一期历史迁成Run。
+新增 `backend/internal/pve` 领域链路，覆盖好友/私聊/邀请/招募、好友房间与本局小队分离、整组票据与逐人确认、共同目标和可选个人任务、可信测试事件、有限增援、自动结算、持久化 Worker 与 Redis 重建。默认 `GAMEPLAY_MODE=v2`；旧一期回归必须显式设置 `GAMEPLAY_MODE=legacy`，不会把一期历史数据迁成 Run。
 
-- [V2发布和运行指南](docs/pve-release-guide.md)
-- [R3发布验收](docs/testing/r3-release-acceptance.md)
-- [R4退役与回滚计划](docs/design/v2-r4-retirement-and-rollback-plan.md)
-- [R4实施与维护控制](docs/design/v2-r4-implementation.md)
-- [R4复核记录](docs/testing/r4-full-review-20261008.md)
-- [R4发布版本与回滚基线](docs/testing/r4-release-acceptance.md)
-- [Unity控制面](client/unity-demo/README.md)
+运行与验证步骤见 [V2 发布和运行指南](docs/pve-release-guide.md)。新库先执行 `v2_migrate -stage r4`，完整迁移 day37—40。React GM 已用真实 V2 服务完成浏览器验收；Unity Windows Player 已完成四人普通/混合来源闭环、重连和逐人结算。仍不代表真实战斗模拟、跨机器网络或商业容量。
 
-## R5 独立实验与复核
-
-新增 [独立 RPC/MQ 模块](experiments/r5-m6/README.md)：只读 gRPC 查询已结算 Run 与奖励榜，恢复副本 outbox 桥接、RabbitMQ 确认投递、手动 ACK 和幂等报表。主玩法与资产事务继续由原单体负责。R5 与全面复核修复已通过本机验收，发布和 CI 结果以对应 Actions run 为准，见 [R5 验收](docs/testing/r5-m6-acceptance.md) 和 [复核记录](docs/testing/20261010-full-review.md)。
-
-本次代码提交、PR/CI及后续main追踪见 [R5公开发布基线](docs/testing/r5-release-acceptance.md)。
+[M7 综合验收](docs/testing/m7-acceptance.md)、[后续复核](docs/testing/post-m7-audit-20261010.md) 与 [持续运行基线](docs/performance/m7-local-soak.md) 记录二期本机证据；精确提交、PR 与 CI 见 [M7 发布基线](docs/testing/m7-release-acceptance.md)，交付边界见 [二期总结](docs/phase2-summary.md)。维护和回退见 [R4 实施](docs/design/v2-r4-implementation.md) 及 [回滚约束](docs/design/v2-r4-retirement-and-rollback-plan.md)。
 
 ## 当前快照
 
+R5/M6 已新增 [独立 RPC/MQ 实验](experiments/r5-m6/README.md)：只读 gRPC 排行/Run 结果、恢复副本 outbox 桥接、RabbitMQ 可靠投递和幂等报表。它不进入主请求/资产链路；本机真实存储、崩溃恢复与故障隔离证据见 [R5 验收](docs/testing/r5-m6-acceptance.md)。
+
+R5与全面复核修复已通过PR #3发布到main，合并后主项目/R5两套Actions全部成功；当前源码/提交/CI及回滚基线见 [R5公开发布](docs/testing/r5-release-acceptance.md)。源工作区的未提交内容与远程发布分别保留。
+
 - 单个 Go 进程提供 Gin HTTP API 和 Gorilla WebSocket。
 - MySQL 8.4 保存账号、审计、结算、奖励、余额与资产流水。
-- Redis 7 保存在线 TTL、匹配 ticket/队列/超时索引和排行榜投影。
-- Go 内存保存 WebSocket 连接、小队和任务会话状态。
+- Redis 7 保存在线 TTL、匹配队列和排行榜等可重建投影。
+- legacy 仍有进程内连接/小队/任务状态；V2 的 Party、票据、Run、任务和结算事实以 MySQL 为准，WebSocket 连接只保存在进程内。
 - Day27-Day35 一期范围已完成并收口。
-- React GM/PVE页面、Unity控制面和Dockerfile已提供；GitHub Actions已验证Go/集成race/前端构建。
-- 当前没有真实战斗服、微服务、Zinx、Kubernetes或云端部署；CI不等于自动上线。
+- React GM 观察页面与 Unity 控制面已加入；Unity Editor 场景联调和跨机器验收仍延期。
+- 当前没有微服务、Zinx、Kubernetes、生产部署或云端服务；仓库包含后端 Dockerfile 和 GitHub Actions 验证流程。
 
 ## 已实现能力
 
@@ -130,7 +124,7 @@ go run .\cmd\tools\v2_migrate -stage r4
 go run .\cmd\server
 ```
 
-默认地址为 `http://localhost:8080`，健康检查：
+默认地址为 `http://localhost:8080`。新库首次启动前必须先完成 day37—day40 迁移；旧一期学习回归可在同一明确停写边界下设置 `GAMEPLAY_MODE=legacy`。健康检查：
 
 ```powershell
 Invoke-RestMethod http://localhost:8080/health
@@ -141,6 +135,9 @@ Invoke-RestMethod http://localhost:8080/health
 | 变量 | 用途 |
 | --- | --- |
 | `APP_PORT` | HTTP/WebSocket 监听端口 |
+| `APP_HOST` | 主监听地址；留空沿用所有网卡，本机验收设为 `127.0.0.1` |
+| `DB_MAX_OPEN_CONNS/DB_MAX_IDLE_CONNS` | MySQL连接预算，默认 `20/10` |
+| `REDIS_POOL_SIZE/REDIS_MAX_ACTIVE_CONNS/REDIS_POOL_TIMEOUT_MS` | Redis默认base池10、硬上限20、等待1000毫秒 |
 | `DB_HOST`、`DB_PORT`、`DB_USER`、`DB_PASSWORD`、`DB_NAME` | MySQL 连接 |
 | `REDIS_ADDR`、`REDIS_PASSWORD`、`REDIS_DB` | Redis 连接 |
 | `JWT_SECRET` | 玩家/管理员 JWT 签名密钥 |

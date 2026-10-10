@@ -307,6 +307,10 @@ v2.run.result
 
 `operation_id` 在同一意图重试时不变；同键不同内容返回40970。查询/重连 `v2.run.reconnect`、`v2.run.result` 不改变业务状态，可只带 `run_id`。成功响应为 `<type>.result`，包含 `schema_version/request_id/code/message/data`，业务变更通知包含其对象引用；客户端收到通知后拉取授权快照。
 
+好友申请的同一operation重试返回原结果；新operation重复申请仍pending的关系返回40970且不再次通知。每位玩家一分钟最多20次成功好友申请，按持久化命令回执计数，撤回重发同一玩家也计入。申请响应、拉黑和私聊等成对操作与双方玩家锁协调，避免并发接受重新建立已拉黑关系。
+
+房间邀请必须指向存在且normal、尚未属于该房间的玩家；不能邀请自己或封禁/不存在的ID。旧房间关系与已经开始的Run不因新的拉黑自动改变。
+
 | 动作类型 | `data` 必需字段或含义 |
 | --- | --- |
 | `v2.social.friend_request/friend_delete/block/unblock` | `player_id` |

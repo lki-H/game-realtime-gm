@@ -43,7 +43,21 @@ try {
     $deadline=(Get-Date).AddMinutes(3)
     $submitted=$false
     while ((Get-Date)-lt $deadline) {
-        $reports=@(foreach($path in $results){if(Test-Path -LiteralPath $path){Get-Content -LiteralPath $path -Raw | ConvertFrom-Json}})
+        $reports=@(foreach($path in $results){
+            if(Test-Path -LiteralPath $path){
+                $stream=$null
+                $reader=$null
+                try{
+                    $stream=[IO.FileStream]::new($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite-bor [IO.FileShare]::Delete))
+                    $reader=[IO.StreamReader]::new($stream,[Text.Encoding]::UTF8)
+                    $content=$reader.ReadToEnd()
+                    if($content){ConvertFrom-Json -InputObject $content -ErrorAction SilentlyContinue}
+                }catch [IO.IOException]{
+                }finally{
+                    if($reader){$reader.Dispose()}elseif($stream){$stream.Dispose()}
+                }
+            }
+        })
         if (@($reports | Where-Object { $_.failure_type }).Count-gt 0) { $reports | Select-Object stage,failure_type,failure | Format-Table; throw 'Unity client verification failed' }
         if ($reports.Count-eq 4 -and !$submitted -and @($reports | Where-Object stage -ne 'assigned').Count-eq 0) {
             $runIDs=@($reports.run_id | Select-Object -Unique)

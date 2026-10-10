@@ -167,7 +167,7 @@ public sealed class PveLocalVerification : MonoBehaviour
     private static void Write(string path, JObject value)
     {
         File.WriteAllText(path + ".tmp", value.ToString());
-        if (File.Exists(path)) File.Delete(path);
-        File.Move(path + ".tmp", path);
+        if (File.Exists(path)) File.Replace(path + ".tmp", path, null);
+        else File.Move(path + ".tmp", path);
     }
 }

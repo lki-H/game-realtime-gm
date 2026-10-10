@@ -3,15 +3,13 @@
 > 文档角色：MySQL、Redis 与进程内状态的数据模型
 > 权威级别：L1（数据设计事实源）
 > 状态：已实现
-> 适用范围：legacy历史与V2/R4单实例事实
+> 适用范围：legacy 与 V2 单实例环境
 > 事实来源：`schema.sql`、Day31 migration、SQL 查询、Redis 实现与 Manager 结构
 > 最后更新：2026-10-10
 
-## V2/R4补充
-
-V2新增 `pve_*` 事实表并与legacy共用player_assets/asset_ledger。day37基础、day38产品、day39归档、day40维护沿用编号SQL与checksum账本；新增`pve_service_control`和`pve_control_operations`，状态、版本与幂等回执持久化。归档保留事件指纹/序号、奖励键、参与者、账本与修复审计。V2时间使用UTC，冻结legacy战绩按原Asia/Shanghai解释，不修改旧行。Redis使用`v2:`投影，仅白名单清理旧匹配key；第1—9节为legacy存储记录。见 [R4实施](design/v2-r4-implementation.md)。
-
 ## 1. 存储原则
+
+第1—9节保留 legacy 数据事实；第10—11节记录 V2 新增表、资产扩展和运行约束。
 
 - MySQL 保存长期事实、审计和资产事务。
 - Redis 保存高频、短期或可从 MySQL/客户端重建的状态与查询投影。
@@ -189,19 +187,39 @@ MySQL 事务不包含 Redis。排行榜采用“先提交事实、后更新投�
 - `backend/internal/database/migrations/day31_settlement_assets.sql`：从 Day30 结构升级到 Day31 资产事务结构。
 - `backend/internal/database/seed.sql`：幂等创建本地管理员。
 
-legacy历史SQL没有自动账本；V2使用`cmd/tools/v2_migrate -stage r4`、schema_migrations与checksum。执行前备份恢复确认目标，dirty/校验不一致拒绝；不承诺MySQL整份DDL事务回滚。
+V2 使用 `cmd/tools/v2_migrate` 和 `schema_migrations`，仍沿用编号 SQL。版本/checksum 与 running/applied/reconciled/failed 记录控制单次执行；工具核对 V2 所需表、列、索引及 ledger兼容改动，异常拒绝。MySQL DDL 不支持整个文件事务回滚；dirty 状态需恢复或修复，不盲目续跑。legacy 历史 SQL 不自动补造迁移记录。
 
 ## 9. 保留、归档与删除
 
-- legacy历史无自动归档；V2正文分批压缩且保留终态/去重/奖励依据，处理中的记录不压缩。
+- legacy没有自动归档；V2私聊正文按窗口分批清理，其他历史按 [归档与维护规则](design/v2-r4-implementation.md) 保留去重、参战、结果、奖励、审计和待处理依据，不自动销毁。
 - `asset_ledger` 和危险 GM 审计应按 append-only 思路维护。
 - 本地测试数据可以按明确玩家前缀和关联顺序清理，但不能把该流程描述成生产删除策略。
 - 备份文件、dump、日志和 profile 不提交 Git，具体见 [备份与恢复](backup-and-recovery.md)。
 - RPO/RTO 尚未正式承诺。
 
-## 10. 历史与非目标
+## 10. V2 持久化事实与投影
+
+V2 增量表由 `backend/internal/database/migrations/day37_v2_pve_foundation.sql` 创建，包含社交、Party、邀请/招募、票据/候选、活动占用、规则版本、Run/参与者、事件/目标、任务尝试、增援、逐人结果、奖励和 pending/outbox。V2 不迁移一期 `mission_records`，而是保留 `run_id`、`participant_id`、任务尝试和奖励来源唯一键；软货币仍在 `player_assets` 中更新，V2 流水使用 `asset_ledger.pve_grant_id/pve_run_id`。
+
+R2增量 `day38_v2_product_model.sql` 增加续组申请/成员响应、招募成员独立准备、票据规则/来源版本、周期任务进度与一次性完成唯一键、停用标记和贡献证据。续组申请只在全员同意、版本/活动锁复核后迁移；招募玩家不写`pve_party_members`，整组排队时形成独立来源票据。R2迁移必须先执行day37并通过账本，再以`v2_migrate -stage r2`执行day38。
+
+V2 规则 JSON 的版本和内容 hash 存入 `pve_rule_versions`，Run 在创建时保存完整规则快照。`pve_run_events` 用 `event_id`、`source`、`source_generation`、`sequence_no` 和 fingerprint 防重放；事件应用、任务进度和奖励来源均有唯一约束。
+
+`pve_participant_results`、`pve_reward_grants`、`player_assets`、`asset_ledger` 按人事务提交，Run终态保存在 `pve_runs`；`FinalizeRun` 检查全员结果。修复请求以 `repair:<operation_id>` 在 `pve_pending_operations` 保存 done/repair_audit 回执与指纹，和原操作复排及 `admin_operation_logs` 一起提交；Worker只处理未完成结算操作。
+
+V2 Redis key 统一使用 `v2:` 前缀：`v2:queue:training_ground` 和 `v2:rewards` 是可重建投影。删除 Redis 不改变 MySQL 活动、Run、任务或资产事实，Worker/投影重建可以重新建立索引。
+
+## 11. V2 运行事实补充
+
+V2 启动时对数据库申请 `GET_LOCK('gm-gameplay:<database>')`，同一数据库只允许一个玩法进程写入；服务停止释放连接锁。V2 数据库连接使用 UTC 解析时间，legacy 继续使用既有开发时区配置。该锁是当前单实例学习环境的保护，不是多实例协调方案。
+
+锁持有连接每秒复核锁归属，连接或锁丢失时停止进程；这仍不是分布式fencing协议。冻结的 legacy `mission_records` DATETIME 按原 Asia/Shanghai 墙上时间解释，玩家历史和GM历史结算不会因V2连接UTC解析而偏移；不修改旧数据。V2 Run、任务、奖励与维护事实继续使用UTC。共用玩家/审计表的历史混合时间仍需按原写入来源核对，不能批量转换旧行。
+
+## 12. 历史与非目标
 
 PostgreSQL 是早期学习历史，不是当前运行依赖。当前不做分库分表、读写分离、自动故障转移、跨区域灾备、逐帧状态持久化，也不允许未来局内服务绕过 Go 业务链路直接修改资产表。
+
+R2 `day38_v2_product_model.sql` 已在独立测试库、真实备份恢复副本和本机开发库执行；两次运行均为 `applied`。R2备份恢复副本与原库旧数据摘要一致，2名玩家/2行资产/总余额0保持。后续环境仍需先备份恢复副本再执行 `V2_MIGRATION_CONFIRM=I_UNDERSTAND_V2_MIGRATION go run ./cmd/tools/v2_migrate -stage r2`，失败时按账本恢复，不通过删除或手工修改周期完成/奖励事实绕过账本。
 
 ## 13. R5 实验数据隔离
 
