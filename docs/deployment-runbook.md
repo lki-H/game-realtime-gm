@@ -14,19 +14,11 @@
 - `WS_MAX_CONNECTIONS` 和 `WS_MAX_CONNECTIONS_PER_IP` 限制连接资源；替换同一玩家连接仍然允许，超额连接返回42972。
 - 本机监控使用 `deploy/docker-compose.monitoring.yml`、`deploy/monitoring/prometheus.example.yml` 和Grafana provisioning文件；Prometheus/Grafana只绑定127.0.0.1，发布前必须替换临时密码和token。
 - 四个Unity Player本机验收使用 `deploy/verify-r3-unity.ps1`，它要求隔离V2配置、临时密码和独立事件token；脚本不会向项目文件写密码。
-- Dockerfile和CI锁定Go 1.27.1；本机Go/React验证和`game-realtime-gm:r3-local`镜像构建通过。Docker Desktop使用Clash Verge的Allow LAN及手动代理访问Docker Hub；共享环境应使用受控代理，不要把本机代理地址写进仓库。
-
-## R3 本机新增运行项
-
-- V2本机服务可开启 `PVE_ARCHIVE_ENABLED=true`、`PVE_ARCHIVE_RETENTION_DAYS`、`PVE_ARCHIVE_BATCH_SIZE`；归档只处理已终态、已结算、无活动占用和无待处理操作的Run，默认关闭。
-- 指标服务通过 `PVE_METRICS_ENABLED=true`、loopback `PVE_METRICS_ADDR` 和独立 `PVE_METRICS_TOKEN` 开启；该token不等于测试事件token，Prometheus只通过Bearer读取。不要绑定公网地址。
-- `WS_MAX_CONNECTIONS` 和 `WS_MAX_CONNECTIONS_PER_IP` 限制连接资源；替换同一玩家连接仍然允许，超额连接返回42972。
-- 本机监控使用 `deploy/docker-compose.monitoring.yml`、`deploy/monitoring/prometheus.example.yml` 和Grafana provisioning文件；Prometheus/Grafana只绑定127.0.0.1，发布前必须替换临时密码和token。
-- 四个Unity Player本机验收使用 `deploy/verify-r3-unity.ps1`，它要求隔离V2配置、临时密码和独立事件token；脚本不会向项目文件写密码。
+- Dockerfile和CI锁定Go 1.27.1；镜像构建已有本机与远程CI证据。Docker Hub访问需要代理时，仅按当前网络配置受控代理，不把本机地址写进仓库。
 
 ## 1. 运行模型
 
-当前只有 MySQL 和 Redis 运行在 Docker Compose 中；Go 服务在宿主机通过 `go run` 或本地二进制启动。没有 Go Dockerfile、反向代理、TLS、Kubernetes、Helm、Ingress、HPA 或自动部署。
+MySQL/Redis 由 Docker Compose 运行；Go 可在宿主机或仓库提供的非 root Docker 镜像中启动。默认 V2 首次启动先执行 `v2_migrate -stage r4` 完成 day37—40；正常停写前由 operator 排空并确认 closed。没有反向代理、TLS、Kubernetes 或自动生产部署，完整入口见 [PVE运行指南](pve-release-guide.md)。
 
 依赖顺序：
 

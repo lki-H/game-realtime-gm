@@ -11,6 +11,8 @@
 
 第1—9节保留 legacy 数据事实；第10—11节记录 V2 新增表、资产扩展和运行约束。
 
+当前默认 V2 以 MySQL 保存业务事实。day37基础、day38产品、day39归档、day40维护使用编号SQL与checksum账本；维护准入与幂等控制回执持久化。冻结legacy战绩按原Asia/Shanghai解释，V2时间为UTC，不批量修改历史行；Redis只保存 `v2:` 投影，旧匹配key仅按白名单清理。详见 [R4实施](design/v2-r4-implementation.md)。
+
 - MySQL 保存长期事实、审计和资产事务。
 - Redis 保存高频、短期或可从 MySQL/客户端重建的状态与查询投影。
 - Go 内存保存只属于当前进程的连接、小队和任务会话。
