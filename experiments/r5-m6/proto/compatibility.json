@@ -1,0 +1,16 @@
+{
+  "package": "pve.reporting.v1",
+  "service": ["GetLeaderboard", "GetRunResult"],
+  "methods": {
+    "GetLeaderboard": "pve.reporting.v1.GetLeaderboardRequest:pve.reporting.v1.GetLeaderboardResponse",
+    "GetRunResult": "pve.reporting.v1.GetRunResultRequest:pve.reporting.v1.GetRunResultResponse"
+  },
+  "messages": {
+    "GetLeaderboardRequest": {"limit": "1:uint32"},
+    "LeaderboardEntry": {"player_id": "1:int64", "score": "2:int64", "rank": "3:uint32"},
+    "GetLeaderboardResponse": {"entries": "1:message:pve.reporting.v1.LeaderboardEntry:repeated"},
+    "GetRunResultRequest": {"run_id": "1:string", "player_id": "2:int64"},
+    "ParticipantResult": {"player_id": "1:int64", "contribution_qualified": "2:bool", "task_completed": "3:bool", "reward": "4:int64", "settled_at": "5:string"},
+    "GetRunResultResponse": {"run_id": "1:string", "operation": "2:string", "difficulty": "3:string", "end_reason": "4:string", "participants": "5:message:pve.reporting.v1.ParticipantResult:repeated"}
+  }
+}

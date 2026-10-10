@@ -7,6 +7,7 @@ export class Control {
   connection: (connected: boolean) => void = () => {};
   private pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout>; intent:{type:string;data:unknown;operationId:string} }>();
   lastUnknown: { type: string; data: unknown; operationId: string } | null = null;
+  private sessionGeneration = 0;
 
   private async response(response: Response, expectedToken: string = this.token) {
     let result;
@@ -29,8 +30,11 @@ export class Control {
     return result.data as T;
   }
   async login(username: string, password: string): Promise<number> {
+    const generation = ++this.sessionGeneration, token = this.token;
     const response = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }), signal: AbortSignal.timeout(10000) });
-    const result = await this.response(response);
+    if (generation !== this.sessionGeneration) throw new Error('会话已改变，已忽略旧登录');
+    const result = await this.response(response, token);
+    if (generation !== this.sessionGeneration) throw new Error('会话已改变，已忽略旧登录');
     this.close();
     this.token = result.data.token;
     this.connect();
@@ -68,7 +72,8 @@ export class Control {
   }
   async send<T>(type: string, data: unknown, operationId: string = crypto.randomUUID()): Promise<T> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error('连接未就绪，请重连');
-    if (this.pending.size >= 32) throw new Error('等待中的操作过多');
+    if (this.pending.size > 0) throw new Error('上一项操作仍在处理中');
+    if (this.lastUnknown && this.lastUnknown.operationId !== operationId) throw new Error('上一项操作结果尚不确定，请先恢复或重试同一操作');
     const requestId = crypto.randomUUID();
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -83,6 +88,6 @@ export class Control {
       }
     });
   }
-  close() { const socket = this.socket; this.socket = null; socket?.close(); this.token = ''; this.rejectPending(); this.lastUnknown = null; this.connection(false); }
+  close() { ++this.sessionGeneration; const socket = this.socket; this.socket = null; socket?.close(); this.token = ''; this.rejectPending(); this.lastUnknown = null; this.connection(false); }
   private rejectPending() { for (const pending of this.pending.values()) { clearTimeout(pending.timer); this.lastUnknown=pending.intent; pending.reject(new Error('连接已关闭，请查询恢复状态')); } this.pending.clear(); }
 }

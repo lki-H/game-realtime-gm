@@ -88,7 +88,7 @@ func ReadCountsTx(ctx context.Context, transaction *sql.Tx, snapshot *Snapshot) 
 		{"SELECT COUNT(*) FROM pve_runs WHERE status IN ('provisioning','loading','running')", &snapshot.ActiveRuns},
 		{"SELECT COUNT(*) FROM pve_runs WHERE status='ending'", &snapshot.EndingRuns},
 		{"SELECT COUNT(*) FROM pve_pending_operations WHERE status IN ('pending','retryable_failed')", &snapshot.PendingOperations},
-		{"SELECT COUNT(*) FROM pve_pending_operations WHERE status='needs_repair'", &snapshot.NeedsRepair},
+		{"SELECT (SELECT COUNT(*) FROM pve_pending_operations WHERE status='needs_repair')+(SELECT COUNT(*) FROM pve_outbox_records WHERE status='needs_repair')", &snapshot.NeedsRepair},
 		{"SELECT COUNT(*) FROM pve_player_activity_locks", &snapshot.ActivityLocks},
 		{"SELECT COUNT(*) FROM pve_outbox_records WHERE status='pending'", &snapshot.PendingOutbox},
 	}

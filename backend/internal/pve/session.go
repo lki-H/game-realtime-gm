@@ -19,7 +19,8 @@ func SessionVersion(ctx context.Context, db *sql.DB, player int64) (int64, error
 	return revoked.UnixMilli(), err
 }
 func Authorize(ctx context.Context, db *sql.DB, claims *auth.Claims) error {
-	if claims == nil || claims.SubjectType != auth.SubjectTypePlayer || claims.PlayerID <= 0 {
+	now := time.Now()
+	if claims == nil || claims.SubjectType != auth.SubjectTypePlayer || claims.PlayerID <= 0 || claims.ExpiresAt == nil || !now.Before(claims.ExpiresAt.Time) || (claims.NotBefore != nil && now.Before(claims.NotBefore.Time)) {
 		return store.Forbidden
 	}
 	var status string

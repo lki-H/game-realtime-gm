@@ -278,6 +278,7 @@ func (transport *V2Transport) WebSocket(c *gin.Context) {
 			return
 		}
 		err = pve.Authorize(ctx, transport.App.DB, claims)
+		sessionRejected := errors.Is(err, store.Forbidden)
 		var output any
 		if err == nil {
 			if message.Type == "v2.run.reconnect" || message.Type == "v2.run.result" {
@@ -306,6 +307,10 @@ func (transport *V2Transport) WebSocket(c *gin.Context) {
 		if err != nil {
 			code = errorCode(err)
 			text = errorText(err)
+		}
+		if sessionRejected {
+			code = 40321
+			text = "player session revoked or expired"
 		}
 		if !client.enqueue(gin.H{"type": message.Type + ".result", "schema_version": 2, "request_id": message.RequestID, "code": code, "message": text, "data": output}) {
 			return

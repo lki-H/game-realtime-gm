@@ -2,17 +2,25 @@
 
 > 文档角色：已完成能力、修复、验证与限制的版本台账
 > 权威级别：L2（阶段发布记录）
-> 状态：一期、V2 R3与R4发布记录已建立
+> 状态：一期、V2 R3、R4与R5发布记录已建立
 > 适用范围：Day27-Day35 与后续公开版本
 > 事实来源：代码、测试、验收记录与性能报告
-> 最后更新：2026-10-08
+> 最后更新：2026-10-10
+
+## R5/M6：独立 RPC/MQ 实验与全面复核
+
+- 新增独立 `experiments/r5-m6` 模块：固定 Go/C# Proto、只读结果/排行 RPC、恢复副本 outbox 桥接、最小权限账号、RabbitMQ confirm/manual ACK/重试/死信/去重报表、真实重启和主链路隔离。
+- 全面复核修复 JWT 过期 WS、坏 outbox 批次阻塞、加载失败 Party 回队列、成员拉黑绕过、客户端迟到身份响应和任务尝试终态；新增回归、GM outbox 观察与 OpenAPI 实体。
+- 本机 MySQL/Redis/RabbitMQ、Linux race、React 浏览器/构建、Unity Windows 构建均通过；跨机器、真实 DS、HA 和商业容量继续延期。远程 CI 以发布后的实际 Actions 结果为准。
+- 详情：[R5 验收](testing/r5-m6-acceptance.md)、[全面复核](testing/20261010-full-review.md)、[模块说明](../experiments/r5-m6/README.md)。
+- 首轮PR的主项目与R5独立CI已success，含真实存储/race和实际旧版本回滚；提交与最终版本追踪见 [R5发布基线](testing/r5-release-acceptance.md)。
 
 ## R4 维护、默认V2与复核修复
 
 - 默认 `GAMEPLAY_MODE=v2`，新增day40持久化准入与控制回执、operator维护/排空、旧匹配缓存白名单工具；历史与显式legacy回归保留。
 - 修复重试权限撤销和并发幂等、旧战绩时间、活跃Run轮转、锁丢失停服、pprof本机约束、独立服务密钥、双网页配置与失效恢复。
 - 远程CI新增固定R3二进制实际回滚验证，使用已有MySQL事实/奖励唯一键，经HTTP重投和Worker重试核对资产。
-- [发布范围、验证与版本基线](testing/r4-release-acceptance.md)、[本机复核记录](testing/r4-full-review-20261008.md)。跨机器、共享部署、真实战斗服与R5仍延期。
+- [发布范围、验证与版本基线](testing/r4-release-acceptance.md)、[本机复核记录](testing/r4-full-review-20261008.md)。跨机器、共享部署与真实战斗服仍延期；R5单独记录在本文件首节。
 - 代码提交`1d8fc7e`的push和PR远程CI全部成功，含真实存储race、实际R3/R4二进制回滚、双前端及镜像构建；详细run与镜像ID见版本基线。本次CI只构建镜像，没有部署公网或推送镜像仓库。
 
 ## R3 合作PVE集成发布

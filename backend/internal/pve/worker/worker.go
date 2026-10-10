@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"time"
 
 	"game-realtime-gm/backend/internal/pve/store"
@@ -126,8 +127,16 @@ func (worker *Worker) Once(ctx context.Context) error {
 				Type    string          `json:"type"`
 				Data    json.RawMessage `json:"data"`
 			}
-			if err := json.Unmarshal(current.data, &envelope); err != nil {
-				return err
+			valid := json.Unmarshal(current.data, &envelope) == nil && strings.HasPrefix(envelope.Type, "v2.") && len(envelope.Players) > 0 && len(envelope.Players) <= 4 && len(envelope.Data) > 0 && json.Valid(envelope.Data)
+			for _, player := range envelope.Players {
+				valid = valid && player > 0
+			}
+			if !valid {
+				if _, err := transaction.ExecContext(ctx, "UPDATE pve_outbox_records SET status='needs_repair' WHERE id=?", current.id); err != nil {
+					return err
+				}
+				slog.Error("pve notification quarantined", "outbox_id", current.id, "error_code", "invalid_notification")
+				continue
 			}
 			notifications = append(notifications, notification{envelope.Players, envelope.Type, envelope.Data})
 			if _, err := transaction.ExecContext(ctx, "UPDATE pve_outbox_records SET status='published',published_at=UTC_TIMESTAMP(3) WHERE id=?", current.id); err != nil {

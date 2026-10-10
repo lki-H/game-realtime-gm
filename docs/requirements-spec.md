@@ -5,7 +5,7 @@
 > 状态：一期历史与V2/R4需求已实现，外部验收延期
 > 适用范围：legacy历史与V2/R4本机Go单体控制面
 > 事实来源：当前路由、Handler、Service、Manager、SQL 与 Day27-Day35 验收
-> 最后更新：2026-10-08
+> 最后更新：2026-10-10
 
 ## V2/R4发布补充
 
@@ -140,3 +140,11 @@ WebSocket 鉴权
 | `REQ-NFR-01..03` | 全局 | storage boundary、middleware、测试工具 | `TC-NFR-*` |
 
 完整 HTTP 字段以 [OpenAPI](openapi.yaml) 为准，WebSocket 消息以 [WebSocket 协议](ws-protocol.md) 为准，测试用例定义见 [测试计划](test-plan.md)。
+
+## R5/M6 独立实验需求
+
+`REQ-R5-01`：只读 gRPC 查询 settled Run 和有限排行榜，独立服务身份、明确 deadline、查询授权、包体/并发限制、固定版本兼容契约；不增加玩家或 GM 动作入口。
+
+`REQ-R5-02`：只读桥接主 outbox，独立投递/receipt/报表；发布 confirm、manual ACK、有限重试、死信、重复/冲突/过期检查和可靠重建；绝不直接写主奖励、余额、Run 或原 outbox 状态。
+
+`REQ-R5-03`：独立启停/清理、恢复副本和最小权限、真实进程/存储重启、主链路故障隔离与回退。R5 仅完成本机原 M6 实验，跨机器、真实战斗服、DS/调度、多实例和生产部署按各自未来门槛推进。证据见 [R5 验收](testing/r5-m6-acceptance.md)。

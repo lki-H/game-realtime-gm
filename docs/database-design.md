@@ -5,7 +5,7 @@
 > 状态：已实现
 > 适用范围：legacy历史与V2/R4单实例事实
 > 事实来源：`schema.sql`、Day31 migration、SQL 查询、Redis 实现与 Manager 结构
-> 最后更新：2026-10-08
+> 最后更新：2026-10-10
 
 ## V2/R4补充
 
@@ -202,3 +202,9 @@ legacy历史SQL没有自动账本；V2使用`cmd/tools/v2_migrate -stage r4`、s
 ## 10. 历史与非目标
 
 PostgreSQL 是早期学习历史，不是当前运行依赖。当前不做分库分表、读写分离、自动故障转移、跨区域灾备、逐帧状态持久化，也不允许未来局内服务绕过 Go 业务链路直接修改资产表。
+
+## 13. R5 实验数据隔离
+
+本机验收只对独立 `game_realtime_v2_test` 合成数据做备份，恢复到 `game_realtime_v2_r5_restore`。`002_source_views.sql` 在恢复副本提供 `r5_runs/results/outbox/leaderboard` 四个有限视图，Reader 仅 SELECT 视图，无原玩家表、资产、Run 或 outbox 写权限。
+
+独立 `game_realtime_r5_reports` 使用编号 `001_reporting.sql`，包含 `r5_scan_state`、`r5_deliveries`、`r5_receipts`、`r5_report_runs`。消息 ID 使用 binary collation；receipt 保存 payload hash 和完整 envelope fingerprint；报表以 source/run 唯一，投递重试不改主事实。Projector 只被授予独立库 CRUD，无主库权限。两份 SQL 不加入主 day37—40 迁移，也不迁移一期历史或开发数据。重新创建实验副本必须重建限定视图和账号，不以这些临时视图替代正式生产只读设计。

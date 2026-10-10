@@ -149,7 +149,7 @@ paths:
               $ref: "#/components/schemas/AdminLoginRequest"
             example:
               username: admin
-              password: local-development-password
+              password: <development-password>
       x-error-codes:
         - {status: 400, code: 40011, message: invalid request}
         - {status: 401, code: 40111, message: username or password is wrong}
@@ -1110,7 +1110,7 @@ paths:
       operationId: getV2Observation
       summary: 查询 V2 只读观察数据
       security: [{AdminBearer: []}]
-      parameters: [{name: entity, in: path, required: true, schema: {type: string, enum: [parties, proposals, runs, tasks, pending]}}]
+      parameters: [{name: entity, in: path, required: true, schema: {type: string, enum: [parties, proposals, runs, tasks, pending, outbox]}}]
       responses: {"200": {description: 观察列表}}
   /api/admin/v2/metrics:
     get:

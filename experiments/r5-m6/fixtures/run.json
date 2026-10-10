@@ -1,0 +1,12 @@
+{
+  "run_id": "run_fixture",
+  "operation": "training_ground",
+  "difficulty": "normal",
+  "end_reason": "success",
+  "participants": [
+    {"player_id":1001,"qualified":true,"task_completed":true,"reward":130,"settled_at":"2026-10-10T00:00:00Z"},
+    {"player_id":1002,"qualified":true,"task_completed":true,"reward":140,"settled_at":"2026-10-10T00:00:00Z"},
+    {"player_id":1003,"qualified":true,"task_completed":true,"reward":125,"settled_at":"2026-10-10T00:00:00Z"},
+    {"player_id":1004,"qualified":true,"task_completed":false,"reward":100,"settled_at":"2026-10-10T00:00:00Z"}
+  ]
+}

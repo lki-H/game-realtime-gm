@@ -1,1 +1,5 @@
 backend/internal/database/migrations/*.sql text eol=lf
+experiments/r5-m6/proto/reporting.proto text eol=lf
+experiments/r5-m6/proto/source.sha256 text eol=lf
+experiments/r5-m6/proto/reporting.pb binary
+experiments/r5-m6/deploy/*.sh text eol=lf

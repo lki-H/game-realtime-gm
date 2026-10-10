@@ -201,12 +201,14 @@ func (s *Service) Execute(ctx context.Context, transaction *sql.Tx, player int64
 		if err := store.RequireNoRecruitment(ctx, transaction, player); err != nil {
 			return nil, err
 		}
-		blocked, err := store.Blocked(ctx, transaction, party.OwnerID, player)
-		if err != nil {
-			return nil, err
-		}
-		if blocked {
-			return nil, store.Forbidden
+		for _, existing := range party.Members {
+			blocked, err := store.Blocked(ctx, transaction, existing.PlayerID, player)
+			if err != nil {
+				return nil, err
+			}
+			if blocked {
+				return nil, store.Forbidden
+			}
 		}
 		if kind == "join" {
 			friends, err := store.Friends(ctx, transaction, party.OwnerID, player)

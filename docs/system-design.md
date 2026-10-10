@@ -9,7 +9,7 @@
 > 状态：已实现
 > 适用范围：legacy历史与V2/R4内部设计
 > 事实来源：`backend/cmd/server` 与 `backend/internal` 当前代码
-> 最后更新：2026-10-08
+> 最后更新：2026-10-10
 
 ## 1. 启动顺序
 
@@ -175,3 +175,11 @@ MySQL UNIQUE 约束是并发幂等最终防线。Redis 排行失败只记录错�
 - WebSocket 消息：[WebSocket 协议](ws-protocol.md)
 - 表、索引与 Redis key：[数据库设计](database-design.md)
 - 安全控制与已知风险：[安全设计](security-design.md)
+
+## 13. R5 独立查询与投递
+
+2026-10-10复核补充主任务记录：Run终止或参与者永久left时，provisional/active尝试转closed，completed保持；死亡/暂时断线仍不关闭个人任务。不兼容任务也关闭本局尝试，不推进长期进度或发个人奖。
+
+`pve.reporting.v1.Reporting` 仅提供 `GetLeaderboard`、`GetRunResult`；固定 Proto 编号、类型、嵌套消息与方法签名，客户端必须提供独立身份和 deadline。结果按 player 范围及参战关系授权，榜单最多100条，包体/并发有界，不复用玩家 JWT。
+
+Bridge 读取原 outbox 的已 settled Run 视图，不更新原状态。独立 MySQL 扫描水位与消息事务提交，定期回查补晚提交；首次投递时间固定。Publisher 持有独立 delivery 行锁，取得 confirm 并确认未 mandatory return 后才标 published；失败有限重试进入 needs_repair。Consumer 规范化消息、检查来源/时效/hash，在事务里锁 message receipt、核对完整 envelope fingerprint，按 source/run 唯一键落报表，再 ACK。重试/死信必须经 confirmed 发布；DB 失联仍依赖 MQ header 限制预算。详细代码和可重复故障测试在 [独立模块](../experiments/r5-m6/README.md)。

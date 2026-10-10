@@ -1,0 +1,5 @@
+bin/
+artifacts/
+.private/
+gen/csharp/bin/
+gen/csharp/obj/
