@@ -38,7 +38,7 @@ R5 已发布基线为 main `bfd6f284bc04d91f5354ec5382f35c24e0c91dfd`（树等�
 | 观察与日志关联 | request_id、operation_id、run_id；受限指标；失败重试日志与审计 | PASS：repair-correlation与Worker故障日志可定位；OTel后置 |
 | React/Unity | GM 六类观察、玩家预览/建房/方案/准备/招募；真实四 Player | 本轮浏览器与 Player PASS |
 | RPC/MQ | experiments/r5-m6/deploy/verify.ps1，独立恢复副本和最小权限 | PASS：本轮完整恢复/权限/confirm/ACK/崩溃/死信/重启/主资产隔离及真实race |
-| CI/备份/回滚 | 已发布 main 两套 CI；隔离恢复；当前/R3 二进制 | PASS：53表恢复一致；Windows/Linux实际R3进程回退；新M7补丁尚未发布 |
+| CI/备份/回滚 | M7合并main两套CI；隔离恢复；当前/R3二进制 | PASS：53表恢复一致；Windows/Linux实际R3进程回退；PR与合并main CI通过 |
 | Linux race/性能 | 单元 race、真实存储 race、参数/机器/时长/资源报告 | PASS：完整存储race86项114.010秒，无SKIP；预算后专项6.438秒 |
 | 契约与文档 | OpenAPI 本地引用、路由、部署、当前演示、版本事实 | 路由/引用自动测试PASS；M7与技术文档同步，以末检记录为准 |
 
@@ -70,4 +70,4 @@ R5 已发布基线为 main `bfd6f284bc04d91f5354ec5382f35c24e0c91dfd`（树等�
 
 M7本机验收完成，二期本机范围可收口。跨机器、OTel、真实战斗服/DS、生产身份/部署、多实例、容量上限和旧学习包彻底删除仍按原边界处理。当前88项测试和有限持续运行不证明任意环境永久无Bug。
 
-后续发布仅从干净副本同步本轮已验收代码/公开文档并跑精确提交的远程CI；本轮没有新commit、push或PR，也没有覆盖开发数据库。末检确认测试进程、监听、容器/网络/卷和随机凭据已清理，原开发容器保持原先停止状态，Docker Desktop恢复停止。私有日志/摘要/备份扫描没有本轮凭据或JWT命中，临时凭据删除；构建与去敏证据在仓库外保留。相关Markdown/YAML文档的链接、围栏和空白检查通过，最后OpenAPI引用与配置测试重新通过。
+本轮发布从干净副本同步已验收代码/公开文档，并通过 PR #4 与合并 main 的两套远程 CI；没有覆盖开发数据库。末检确认测试进程、监听、容器/网络/卷和随机凭据已清理，原开发容器保持原先停止状态，Docker Desktop恢复停止。私有日志/摘要/备份扫描没有本轮凭据或JWT命中，临时凭据删除；构建与去敏证据在仓库外保留。相关Markdown/YAML文档的链接、围栏和空白检查通过，最后OpenAPI引用与配置测试重新通过。
