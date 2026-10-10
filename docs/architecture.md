@@ -5,7 +5,7 @@
 > 状态：已实现
 > 适用范围：legacy历史与V2/R4本机Go单体
 > 事实来源：`cmd/server`、`internal/router`、Docker Compose、MySQL schema 与 Redis 实现
-> 最后更新：2026-10-08
+> 最后更新：2026-10-10
 
 ## 1. 架构范围
 
@@ -95,3 +95,9 @@ flowchart LR
 - 将本机 Day34 数据外推为商业并发能力。
 
 模块内部调用、锁、状态机、事务和失败处理见 [系统详细设计](system-design.md)。
+
+## 8. R5/M6 独立实验边界
+
+`experiments/r5-m6` 是独立 Go 模块和独立运行角色，不由 `backend` 导入。gRPC 仅查询恢复副本中的有限 settled 视图；只读 Bridge 扫描 `v2.run.result` outbox，将投递状态写独立报表数据库，再经 RabbitMQ 发布确认与提交后 ACK 形成幂等报表。原 Worker 的 pending/outbox 状态与资产事务不参与这条实验链。
+
+真实本机验证包括主服务四人结算、合成备份恢复、数据库/MQ 最小权限、消费者提交后崩溃、broker/数据库/RPC 重启和实验停止后主服务继续结算。所有实验端口仅本机；没有引入主链路 RPC/MQ、服务发现、真实战斗服或多实例。契约、启停与图见 [实验入口](../experiments/r5-m6/README.md)，证据见 [R5 验收](testing/r5-m6-acceptance.md)。

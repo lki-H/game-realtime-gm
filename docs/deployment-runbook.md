@@ -5,7 +5,7 @@
 > 状态：适用于本地/测试环境
 > 适用范围：Windows + Docker Desktop + 宿主机 Go 服务
 > 事实来源：当前配置加载、Docker Compose、schema、seed 与 pprof 实现
-> 最后更新：2026-08-31
+> 最后更新：2026-10-10
 
 ## 1. 运行模型
 
@@ -238,3 +238,11 @@ MySQL 结算成功但 Redis 同步失败时，资产仍然有效。使用同一�
 - 蓝绿/金丝雀、自动回滚、HA MySQL/Redis 或跨区域灾备。
 
 备份与恢复步骤见 [备份与恢复](backup-and-recovery.md)，安全发布前置条件见 [安全设计](security-design.md)。
+
+## 13. R5 独立实验运行
+
+先执行 `experiments/r5-m6/deploy/verify.ps1`，默认用仓库外 D 盘证据和固定 `gm-r5-verify` 隔离项目，结束清理实验进程、容器、卷和临时凭据。需要手动学习则加 `-KeepEnvironment`，再对输出目录运行 `deploy/start.ps1/stop.ps1 -EnvironmentDirectory <目录>`；`-ResetData` 只删除本实验数据。端口只绑定本机，原开发数据和主服务玩法模式不修改。
+
+完整初学者步骤、具体端口、日志/指标、重建和 needs_repair 排障见 [独立实验说明](../experiments/r5-m6/README.md)。主服务不必配置 gRPC 或 RabbitMQ；停止整个实验即可回退。CI新增独立契约/单元检查，远程执行须以实际 run 为准，不将本机 PASS 称为远程 CI。
+
+主Worker遇到无效通知会隔离到outbox的needs_repair，GM通知记录仅显示元数据，不返回私聊正文；排空ready-to-stop和needs_repair指标包含该行。修复须先核对来源/原操作并恢复有效payload，再由受控运维恢复pending；禁止为“清零指标”直接删除未知事实。当前没有公开写通知接口。R5主reports队列补DLX参数后，之前保留的实验环境需用stop -ResetData清理再重新验收初始化；不覆盖开发数据库。

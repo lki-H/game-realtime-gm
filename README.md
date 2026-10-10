@@ -2,10 +2,10 @@
 
 > 文档角色：项目公开入口与快速启动
 > 权威级别：L1（导航与当前能力摘要）
-> 状态：R4本机实施与复核已验证；共享切换与跨机器延期
+> 状态：R5本机实现与复核已验证；远程CI、共享切换与跨机器按发布门槛推进
 > 适用范围：本地学习、接口验证与求职展示
 > 事实来源：当前 Go 代码、路由、SQL、Docker Compose 与 Day27-Day35 验收证据
-> 最后更新：2026-10-08
+> 最后更新：2026-10-10
 
 这是一个模块化单体 Go 学习项目，围绕玩家账号、GM 管理、WebSocket 小队、任务会话、Redis 匹配、幂等结算、资产流水、排行榜和实时观察建立完整业务闭环。
 
@@ -22,6 +22,10 @@
 - [R4复核记录](docs/testing/r4-full-review-20261008.md)
 - [R4发布版本与回滚基线](docs/testing/r4-release-acceptance.md)
 - [Unity控制面](client/unity-demo/README.md)
+
+## R5 独立实验与复核
+
+新增 [独立 RPC/MQ 模块](experiments/r5-m6/README.md)：只读 gRPC 查询已结算 Run 与奖励榜，恢复副本 outbox 桥接、RabbitMQ 确认投递、手动 ACK 和幂等报表。主玩法与资产事务继续由原单体负责。R5 与全面复核修复已通过本机验收，发布和 CI 结果以对应 Actions run 为准，见 [R5 验收](docs/testing/r5-m6-acceptance.md) 和 [复核记录](docs/testing/20261010-full-review.md)。
 
 ## 当前快照
 

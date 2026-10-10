@@ -23,6 +23,7 @@ public sealed class PveControlClient : MonoBehaviour
     private ClientWebSocket socket;
     private string token;
     private int generation;
+    private int sessionGeneration;
     private bool destroyed;
     public long PlayerId { get; private set; }
     private readonly SemaphoreSlim writeLock = new SemaphoreSlim(1, 1);
@@ -32,12 +33,15 @@ public sealed class PveControlClient : MonoBehaviour
     private void Awake() { lifetime = new CancellationTokenSource(); }
     public async Task Login(string username, string password)
     {
+        var currentSession = Interlocked.Increment(ref sessionGeneration);
         var body = new StringContent(JsonConvert.SerializeObject(new { username, password }), Encoding.UTF8, "application/json");
         using (body)
         using (var response = await client.PostAsync(ServerUrl + "/api/login", body, lifetime.Token))
         {
             var result = JObject.Parse(await response.Content.ReadAsStringAsync());
+            if (destroyed || currentSession != sessionGeneration) throw new InvalidOperationException("Session changed; stale login discarded");
             if (!response.IsSuccessStatusCode || (int?)result["code"] != 0) throw new InvalidOperationException((string)result["message"] ?? "Login failed");
+            await Disconnect();
             token = (string)result["data"]["token"];
             PlayerId = (long)result["data"]["player"]["id"];
         }
@@ -125,12 +129,16 @@ public sealed class PveControlClient : MonoBehaviour
     public async Task<JObject> Query(string path)
     {
         if (!path.StartsWith("/api/v2/", StringComparison.Ordinal)) throw new ArgumentException("V2 query path required");
+        var currentSession = sessionGeneration;
+        var currentToken = token;
         using (var request = new HttpRequestMessage(HttpMethod.Get, ServerUrl.TrimEnd('/') + path))
         {
-            request.Headers.Add("Authorization", "Bearer " + token);
+            request.Headers.Add("Authorization", "Bearer " + currentToken);
             using (var response = await client.SendAsync(request, lifetime.Token))
             {
                 var result = JObject.Parse(await response.Content.ReadAsStringAsync());
+                if (destroyed || currentSession != sessionGeneration || token != currentToken) throw new InvalidOperationException("Session changed; stale query discarded");
+                if ((int)response.StatusCode == 401 || (int?)result["code"] == 40321) ExpireSession();
                 if (!response.IsSuccessStatusCode || (int?)result["code"] != 0) throw new InvalidOperationException((string)result["message"] ?? "Request failed");
                 return result;
             }
@@ -160,6 +168,7 @@ public sealed class PveControlClient : MonoBehaviour
                 if (!Current(connection, currentGeneration)) return;
                 var requestId = (string)message["request_id"];
                 lock (requests) { if (requestId != null && requests.TryGetValue(requestId, out var completion)) completion.TrySetResult(message); }
+                if ((int?)message["code"] == 40321) { ExpireSession(); return; }
                 Enqueue(() => { if (Current(connection, currentGeneration)) Received?.Invoke(message); });
             }
         }
@@ -183,6 +192,14 @@ public sealed class PveControlClient : MonoBehaviour
             requests.Clear();
         }
     }
+    private void ExpireSession()
+    {
+        Interlocked.Increment(ref sessionGeneration);
+        token = null;
+        PlayerId = 0;
+        _ = Disconnect();
+        Enqueue(() => ConnectionStateChanged?.Invoke("Session expired; login again"));
+    }
     private void Enqueue(Action action)
     {
         lock (callbacks)
@@ -197,5 +214,5 @@ public sealed class PveControlClient : MonoBehaviour
         }
     }
     private void Update() { while (true) { Action action; lock (callbacks) { if (callbacks.Count == 0) return; action = callbacks.Dequeue(); } action(); } }
-    private void OnDestroy() { destroyed = true; lifetime.Cancel(); RejectPending(); socket?.Abort(); socket?.Dispose(); client.Dispose(); }
+    private void OnDestroy() { destroyed = true; Interlocked.Increment(ref sessionGeneration); lifetime.Cancel(); RejectPending(); socket?.Abort(); socket?.Dispose(); client.Dispose(); }
 }

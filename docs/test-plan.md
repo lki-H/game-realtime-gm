@@ -5,7 +5,7 @@
 > 状态：一期基线已建立，持续补充
 > 适用范围：当前 Go 单体服务与本地/测试环境
 > 事实来源：需求、自动测试、Day27-Day35 验收与 Day34 性能记录
-> 最后更新：2026-10-08
+> 最后更新：2026-10-10
 
 ## V2/R4发布验证
 
@@ -172,3 +172,9 @@ Day34 已建立本机回环 E3 基线：8 客户端冒烟和 20 客户端、1000
 - 没有未处理 S0/S1。
 - 文档、OpenAPI、WebSocket 契约与实际路由一致。
 - 证据真实标注为 E0-E4，不包装成 E5。
+
+## 12. V2 验收入口
+
+2026-10-10复核增加 `review_20261010_test.go`，覆盖JWT时间、已建立WS过期、异常outbox隔离/排空、加载失败回队列、成员拉黑及不兼容/永久退出任务尝试终态。R5增加poison redelivery死信和过期已确认消息去重；完整复核证据见 [本轮记录](testing/20261010-full-review.md)。
+
+R5 的独立模块验收另见 [RPC/MQ 验收](testing/r5-m6-acceptance.md)，不由主 `backend/go test ./...` 自动覆盖。`experiments/r5-m6/deploy/verify.ps1` 验证真实备份恢复、只读 SQL 权限、服务身份/deadline、confirm/ACK/重投/死信/冲突、晚提交回查、投影重建、实际进程崩溃、broker/数据库重启以及主链路故障隔离；Linux race 包含真实 MySQL/RabbitMQ。普通无依赖单元测试中的 Integration SKIP 必须如实标注。

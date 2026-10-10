@@ -5,7 +5,7 @@
 > 状态：学习环境基线；公网部署前需加固
 > 适用范围：当前 Go HTTP/WebSocket、MySQL、Redis 与本地运维
 > 事实来源：认证中间件、JWT、Handler、SQL、访问日志、pprof、Compose 与测试
-> 最后更新：2026-10-08
+> 最后更新：2026-10-10
 
 ## V2/R4安全补充
 
@@ -132,3 +132,11 @@ flowchart LR
 - 数据最小化、备份加密、审计保留规则和恢复演练。
 
 CSRF 当前不是 Bearer Authorization API 的主要风险；若未来改用 cookie 身份，必须重新设计 SameSite、Secure、HttpOnly 和 CSRF 防护。
+
+## 10. R5 实验安全控制
+
+R5 RPC/MQ 的身份和数据库/MQ 账号独立，禁止使用玩家或 GM JWT。RPC token 仅保存 hash，查询按方法 scope、player 范围和 Run 参与关系授权，必须有短 deadline。运行配置拒绝 root、开发库名和公网 listener；Reader 只能查恢复副本的有限视图，Projector 只能写独立报表库。MQ publisher/consumer 无 topology configure 权限，按 exchange/queue 限定写读。
+
+消息包含明确来源、版本、时效和规范化 payload hash；完整 envelope fingerprint 防同 ID 改内容，唯一 Run 报表防重复计数。报告不发奖，任何消息失联/重投/死信均不改主资产。凭据只在仓库外受限目录；启停脚本核对进程路径和启动时间、只清理专用项目资源。当前 loopback 明文只适用于已确认的个人本机环境；完整威胁、证据和外网前置条件见 [R5 威胁模型](design/r5-m6-threat-model.md)。
+
+2026-10-10 复核补充：V2玩家JWT会话复核强制当前有效exp并拒绝未来nbf，已建立WebSocket的每条命令和定期校验同样检查。好友房间加入校验所有现有成员的拉黑关系。坏通知进入needs_repair并在outbox观察显示，不阻塞其他通知；排空与修复指标包含这些记录。R5已落库、fingerprint匹配的过期重投只ACK去重；未知/变更的过期消息仍隔离。quorum主报告队列的投递超限启用至少一次dead-letter，避免多次进程崩溃后静默丢弃。

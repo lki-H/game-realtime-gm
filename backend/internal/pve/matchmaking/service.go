@@ -594,6 +594,9 @@ func (s *Service) releaseTicket(ctx context.Context, transaction *sql.Tx, ticket
 		_, err := transaction.ExecContext(ctx, "UPDATE pve_party_members SET ready=0 WHERE party_id=(SELECT source_party_id FROM pve_match_tickets WHERE id=?)", ticket)
 		return err
 	}
+	if _, err := transaction.ExecContext(ctx, "UPDATE pve_parties SET status='queued' WHERE id=(SELECT source_party_id FROM pve_match_tickets WHERE id=?)", ticket); err != nil {
+		return err
+	}
 	_, err := transaction.ExecContext(ctx, "UPDATE pve_player_activity_locks SET activity_type='ticket',activity_id=? WHERE ((activity_type='ticket' AND activity_id=?) OR (activity_type='run' AND activity_id=?)) AND player_id IN (SELECT player_id FROM pve_match_ticket_members WHERE ticket_id=?)", ticket, ticket, expectedRun, ticket)
 	return err
 }

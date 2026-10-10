@@ -254,13 +254,13 @@ func Save(ctx context.Context, transaction *sql.Tx, state *State) error {
 		}
 		if member.TaskAttemptID != "" {
 			status := ""
-			if terminal(state) {
+			if terminal(state) || member.Status == "left" {
 				status = "closed"
 			} else if state.Status == "running" {
 				status = "active"
 			}
 			if status != "" {
-				if _, err := transaction.ExecContext(ctx, "UPDATE pve_player_task_attempts SET status=? WHERE id=? AND status='provisional'", status, member.TaskAttemptID); err != nil {
+				if _, err := transaction.ExecContext(ctx, "UPDATE pve_player_task_attempts SET status=? WHERE id=? AND status IN ('provisional','active')", status, member.TaskAttemptID); err != nil {
 					return err
 				}
 			}

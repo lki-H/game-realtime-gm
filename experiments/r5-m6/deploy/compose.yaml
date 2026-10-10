@@ -1,0 +1,86 @@
+name: gm-r5-verify
+services:
+  mysql:
+    image: mysql:8.4.11
+    environment:
+      MYSQL_ROOT_PASSWORD: ${PVE_TEST_PASSWORD:?temporary password required}
+      MYSQL_DATABASE: game_realtime_v2_test
+      MYSQL_USER: pve_test
+      MYSQL_PASSWORD: ${PVE_TEST_PASSWORD}
+    ports:
+      - "127.0.0.1:23306:23306"
+    command: ["--default-time-zone=+00:00", "--port=23306"]
+    volumes:
+      - ../../../backend/internal/database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ../../../deploy/v2-test-init.sql:/docker-entrypoint-initdb.d/02-isolated-db.sql:ro
+      - mysql_data:/var/lib/mysql
+    mem_limit: 1g
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_PASSWORD mysql -h127.0.0.1 -P23306 -u$$MYSQL_USER -D$$MYSQL_DATABASE -e 'SELECT 1' >/dev/null"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+  redis:
+    image: redis:7
+    ports:
+      - "127.0.0.1:26379:6379"
+    volumes:
+      - redis_data:/data
+    mem_limit: 128m
+    restart: "no"
+  rabbitmq:
+    image: rabbitmq:4.3.6-management@sha256:8dd6e3570ddaa2ef82a6c3a8950e79c1f73893adfbdddbc374fc1f1ac8a0f5dd
+    hostname: r5-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: r5_admin
+      RABBITMQ_DEFAULT_PASS: ${R5_ADMIN_PASSWORD:?temporary password required}
+    ports:
+      - "127.0.0.1:25672:5672"
+      - "127.0.0.1:25673:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    mem_limit: 768m
+    cpus: 1.0
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 3s
+      timeout: 10s
+      retries: 40
+  main:
+    profiles: ["main"]
+    image: golang:1.27.1-bookworm
+    command: ["/r5/bin/main-linux"]
+    environment:
+      GAMEPLAY_MODE: v2
+      APP_PORT: "8080"
+      DB_HOST: mysql
+      DB_PORT: "23306"
+      DB_NAME: game_realtime_v2_test
+      DB_USER: pve_test
+      DB_PASSWORD: ${PVE_TEST_PASSWORD}
+      REDIS_ADDR: redis:6379
+      REDIS_DB: "14"
+      JWT_SECRET: ${R5_MAIN_JWT:?temporary identity required}
+      PVE_TEST_EVENTS_ENABLED: "true"
+      PVE_TEST_EVENTS_ADDR: "127.0.0.1:8090"
+      PVE_TEST_EVENTS_TOKEN: ${R5_MAIN_EVENT_TOKEN:?temporary event identity required}
+      PVE_VERIFY_PASSWORD: ${R5_MAIN_PLAYER_PASSWORD:?temporary player password required}
+      PVE_VERIFY_PREFIX: r5_acceptance
+      PVE_METRICS_ENABLED: "false"
+      PVE_ARCHIVE_ENABLED: "false"
+      PPROF_ENABLED: "false"
+      AUTH_RATE_LIMIT_PER_MINUTE: "1000"
+      GIN_MODE: release
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ${R5_BINARY_DIRECTORY:?built fixture binaries required}:/r5/bin:ro
+    mem_limit: 512m
+    restart: "no"
+volumes:
+  mysql_data:
+  rabbitmq_data:
+  redis_data:

@@ -26,19 +26,20 @@ func V2Observation(db *sql.DB) gin.HandlerFunc {
 			"runs":      "SELECT id,operation_name,difficulty,status,end_reason,started_at,ended_at,reinforcement_used FROM pve_runs ORDER BY created_at DESC LIMIT 50",
 			"tasks":     "SELECT run_id,player_id,task_key,compatibility_status,status FROM pve_player_task_attempts ORDER BY created_at DESC LIMIT 50",
 			"pending":   "SELECT operation_id,operation_type,aggregate_id,status,attempts,next_attempt_at,last_error FROM pve_pending_operations ORDER BY updated_at DESC LIMIT 50",
+			"outbox":    "SELECT id,operation_id,event_type,aggregate_id,status,created_at,published_at FROM pve_outbox_records ORDER BY created_at DESC LIMIT 50",
 		}
 		query, exists := queries[c.Param("entity")]
 		if !exists {
 			c.JSON(404, gin.H{"code": 40470, "message": "unknown observation"})
 			return
 		}
-		tables := map[string]string{"parties": "pve_parties", "proposals": "pve_match_proposals", "runs": "pve_runs", "tasks": "pve_player_task_attempts", "pending": "pve_pending_operations"}
+		tables := map[string]string{"parties": "pve_parties", "proposals": "pve_match_proposals", "runs": "pve_runs", "tasks": "pve_player_task_attempts", "pending": "pve_pending_operations", "outbox": "pve_outbox_records"}
 		var total int64
 		if err := db.QueryRowContext(c.Request.Context(), "SELECT COUNT(*) FROM "+tables[c.Param("entity")]).Scan(&total); err != nil {
 			c.JSON(500, gin.H{"code": 50070, "message": "count observation failed"})
 			return
 		}
-		query = strings.TrimSuffix(query, " LIMIT 50") + ", " + map[string]string{"parties": "id", "proposals": "id", "runs": "id", "tasks": "id", "pending": "operation_id"}[c.Param("entity")] + " LIMIT ? OFFSET ?"
+		query = strings.TrimSuffix(query, " LIMIT 50") + ", " + map[string]string{"parties": "id", "proposals": "id", "runs": "id", "tasks": "id", "pending": "operation_id", "outbox": "id"}[c.Param("entity")] + " LIMIT ? OFFSET ?"
 		rows, err := db.QueryContext(c.Request.Context(), query, pageSize, (page-1)*pageSize)
 		if err != nil {
 			c.JSON(500, gin.H{"code": 50070, "message": "query observation failed"})
@@ -66,7 +67,7 @@ func V2Metrics(db *sql.DB) gin.HandlerFunc {
 			{"pve_event_gap_total", "SELECT COUNT(*) FROM pve_runs WHERE end_reason='event_gap'"},
 			{"pve_reinforcement_reserved", "SELECT COALESCE(SUM(reinforcement_reserved),0) FROM pve_runs WHERE status='running'"},
 			{"pve_worker_retries_total", "SELECT COALESCE(SUM(GREATEST(attempts-1,0)),0) FROM pve_pending_operations"},
-			{"pve_needs_repair", "SELECT COUNT(*) FROM pve_pending_operations WHERE status='needs_repair'"},
+			{"pve_needs_repair", "SELECT (SELECT COUNT(*) FROM pve_pending_operations WHERE status='needs_repair')+(SELECT COUNT(*) FROM pve_outbox_records WHERE status='needs_repair')"},
 			{"pve_settlement_seconds", "SELECT COALESCE(AVG(TIMESTAMPDIFF(MICROSECOND,r.ended_at,p.settled_at))/1000000,0) FROM pve_participant_results p JOIN pve_runs r ON r.id=p.run_id WHERE p.result_status='settled'"},
 		}
 		var body strings.Builder

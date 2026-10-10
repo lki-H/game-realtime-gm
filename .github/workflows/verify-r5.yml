@@ -1,0 +1,41 @@
+name: Verify independent R5
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  r5-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.27.1
+          cache-dependency-path: experiments/r5-m6/go.sum
+      - name: Tests, race and vet
+        working-directory: experiments/r5-m6
+        run: |
+          go test -race ./...
+          go vet ./...
+          go mod verify
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: C sharp contract compilation
+        working-directory: experiments/r5-m6
+        run: dotnet run --project gen/csharp/ContractCheck.csproj -c Release --no-launch-profile
+  r5-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.27.1
+          cache-dependency-path: |
+            backend/go.sum
+            experiments/r5-m6/go.sum
+      - name: Real storage, race and failure isolation
+        run: bash experiments/r5-m6/deploy/verify-ci.sh

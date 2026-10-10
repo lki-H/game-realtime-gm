@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 
-const views = [['parties', '好友房间'], ['proposals', '匹配确认'], ['runs', '共同作战'], ['tasks', '个人任务'], ['pending', '待处理记录']] as const;
+const views = [['parties', '好友房间'], ['proposals', '匹配确认'], ['runs', '共同作战'], ['tasks', '个人任务'], ['pending', '待处理记录'], ['outbox','通知记录']] as const;
 type Row = Record<string, unknown>;
 async function readResponse(response: Response) {
  const body=await response.text();
