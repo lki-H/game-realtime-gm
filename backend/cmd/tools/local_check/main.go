@@ -95,6 +95,9 @@ func check(mode, expected, schemaRoot string) error {
 				return err
 			}
 		}
+		if err := inspectFoundation(ctx, tx); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return errors.New("read-only transaction could not complete")
@@ -115,6 +118,10 @@ func inspectTables(ctx context.Context, tx *sql.Tx, script string) error {
 		return errors.New("original migration has no recognizable table definitions")
 	}
 	for _, definition := range definitions {
+		var tableCount int
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?", definition[1]).Scan(&tableCount); err != nil || tableCount != 1 {
+			return errors.New("numbered schema table is missing")
+		}
 		for _, column := range regexp.MustCompile(`(?m)^\s*([a-z][a-z0-9_]*)\s+([A-Z]+(?:\([0-9,]+\))?)([^\r\n]*)`).FindAllStringSubmatch(definition[2], -1) {
 			nullable := "YES"
 			if strings.Contains(column[3], "NOT NULL") {
@@ -137,6 +144,34 @@ func inspectTables(ctx context.Context, tx *sql.Tx, script string) error {
 			if err := tx.QueryRowContext(ctx, "SELECT COALESCE(GROUP_CONCAT(column_name ORDER BY seq_in_index),''),COALESCE(MAX(non_unique),0) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name=? AND index_name=?", definition[1], name).Scan(&columns, &nonUnique); err != nil || columns != strings.ReplaceAll(index[4], " ", "") || ((name == "PRIMARY" || index[2] != "") && nonUnique != 0) {
 				return errors.New("numbered schema index shape is incomplete")
 			}
+		}
+	}
+	return nil
+}
+
+// These are the inline primary keys and ALTER TABLE changes in the fixed
+// day37 foundation. Keep them explicit rather than extending a SQL parser.
+func inspectFoundation(ctx context.Context, tx *sql.Tx) error {
+	columns := []struct{ table, name, kind, nullable string }{
+		{"pve_match_lanes", "id", "varchar(128)", "NO"},
+		{"pve_session_revocations", "player_id", "bigint", "NO"},
+		{"asset_ledger", "mission_record_id", "bigint", "YES"},
+		{"asset_ledger", "reward_record_id", "bigint", "YES"},
+		{"asset_ledger", "mission_instance_id", "varchar(64)", "YES"},
+		{"asset_ledger", "pve_grant_id", "bigint", "YES"},
+		{"asset_ledger", "pve_run_id", "varchar(64)", "YES"},
+	}
+	for _, column := range columns {
+		var kind, nullable string
+		if err := tx.QueryRowContext(ctx, "SELECT column_type,is_nullable FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=?", column.table, column.name).Scan(&kind, &nullable); err != nil || kind != column.kind || nullable != column.nullable {
+			return errors.New("foundation inline key or asset ledger column shape is incomplete")
+		}
+	}
+	for _, index := range []struct{ table, name, column string }{{"pve_match_lanes", "PRIMARY", "id"}, {"pve_session_revocations", "PRIMARY", "player_id"}, {"asset_ledger", "uq_asset_ledger_pve_grant", "pve_grant_id"}} {
+		var columns string
+		var nonUnique int
+		if err := tx.QueryRowContext(ctx, "SELECT COALESCE(GROUP_CONCAT(column_name ORDER BY seq_in_index),''),COALESCE(MAX(non_unique),0) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name=? AND index_name=?", index.table, index.name).Scan(&columns, &nonUnique); err != nil || columns != index.column || nonUnique != 0 {
+			return errors.New("foundation inline primary key or reward uniqueness index is incomplete")
 		}
 	}
 	return nil

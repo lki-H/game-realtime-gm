@@ -109,7 +109,95 @@ function Assert-LocalKeys($Value,[string[]]$Allowed,[string[]]$Required){
     foreach($key in $Required){if($key -notin $Value.PSObject.Properties.Name){throw ('Missing explicit configuration key: '+$key)}}
 }
 
-function Invoke-LocalNative([string]$Executable,[string[]]$Arguments){
+function Get-LocalMemorySnapshot {
+    if(!$IsWindows){return $null}
+    try{
+        $memory=Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+        if($null -eq $memory.FreeVirtualMemory -or $null -eq $memory.FreePhysicalMemory){throw 'Missing memory counters.'}
+        [pscustomobject]@{commit_bytes=([UInt64]$memory.FreeVirtualMemory*1KB);physical_bytes=([UInt64]$memory.FreePhysicalMemory*1KB)}
+    }catch{throw 'ENV_RESOURCE_BLOCKED: system memory availability could not be checked; no new heavy process was started.'}
+}
+
+function Assert-LocalMemoryAdmission([ValidateSet('ServicesStart','Go')][string]$Workload){
+    if(!$IsWindows){return}
+    $memory=Get-LocalMemorySnapshot
+    $commit=if($Workload -eq 'ServicesStart'){2688MB}else{1792MB}
+    $physical=if($Workload -eq 'ServicesStart'){1536MB}else{1024MB}
+    if($memory.commit_bytes -lt $commit -or $memory.physical_bytes -lt $physical){throw ('ENV_RESOURCE_BLOCKED: '+$Workload+' requires '+($commit/1MB)+' MiB available commit and '+($physical/1MB)+' MiB physical memory; nothing was started.')}
+}
+
+function Assert-LocalMemoryReserve {
+    if(!$IsWindows){return}
+    $memory=Get-LocalMemorySnapshot
+    if($memory.commit_bytes -lt 1GB -or $memory.physical_bytes -lt 512MB){throw 'ENV_RESOURCE_BLOCKED: the unchanged 1 GiB commit / 512 MiB physical reserve was reached; this launcher-owned process was stopped.'}
+}
+
+function Start-LocalOwnedProcess([string]$Executable,[string[]]$Arguments){
+    $command=Get-Command $Executable -CommandType Application -ErrorAction Stop|Select-Object -First 1
+    $start=[Diagnostics.ProcessStartInfo]::new($command.Source)
+    foreach($argument in $Arguments){$start.ArgumentList.Add($argument)}
+    $start.WorkingDirectory=(Get-Location).Path
+    $start.UseShellExecute=$false;$start.CreateNoWindow=$true
+    $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+    [Diagnostics.Process]::Start($start)
+}
+
+function Stop-LocalOwnedProcess($Process){
+    if(!$Process.HasExited){$Process.Kill($true);[void]$Process.WaitForExit(5000)}
+}
+
+function Test-LocalReadiness([string]$Address){
+    $handler=[Net.Http.HttpClientHandler]::new();$handler.UseProxy=$false
+    $client=[Net.Http.HttpClient]::new($handler);$client.Timeout=[TimeSpan]::FromMilliseconds(500)
+    try{
+        $response=$client.GetAsync($Address).GetAwaiter().GetResult()
+        try{return $response.StatusCode -eq [Net.HttpStatusCode]::OK}finally{$response.Dispose()}
+    }catch{return $false}finally{$client.Dispose()}
+}
+
+function Wait-LocalOwnedProcess($Process,[string]$ReadyAddress=''){
+    $ready=!$ReadyAddress;$deadline=[DateTime]::UtcNow.AddSeconds(30)
+    $nextMemory=[DateTime]::MinValue
+    $stdout=$Process.StandardOutput.ReadLineAsync();$stderr=$Process.StandardError.ReadLineAsync()
+    try{
+        while(!$Process.HasExited){
+            if([DateTime]::UtcNow -ge $nextMemory){Assert-LocalMemoryReserve;$nextMemory=[DateTime]::UtcNow.AddSeconds(1)}
+            foreach($stream in @('stdout','stderr')){
+                for($lineCount=0;$lineCount -lt 128;$lineCount++){
+                    $pending=if($stream -eq 'stdout'){$stdout}else{$stderr}
+                    if($null -eq $pending -or !$pending.IsCompleted){break}
+                    $line=$pending.GetAwaiter().GetResult()
+                    if($null -ne $line){Write-Output $line}
+                    if($stream -eq 'stdout'){$stdout=if($null -ne $line){$Process.StandardOutput.ReadLineAsync()}else{$null}}
+                    else{$stderr=if($null -ne $line){$Process.StandardError.ReadLineAsync()}else{$null}}
+                }
+            }
+            if(!$ready){
+                if(Test-LocalReadiness $ReadyAddress){$ready=$true;Write-Host ('Service ready: '+$ReadyAddress)}
+                elseif([DateTime]::UtcNow -ge $deadline){throw 'Owned service did not become ready within 30 seconds.'}
+            }
+            [void]$Process.WaitForExit(100)
+        }
+        # Drain outstanding reads only after the child has exited. Both pipes
+        # have been consumed while it was running, preventing full-pipe deadlock.
+        foreach($stream in @('stdout','stderr')){
+            $pending=if($stream -eq 'stdout'){$stdout}else{$stderr}
+            if($null -ne $pending){$line=$pending.GetAwaiter().GetResult();if($null -ne $line){Write-Output $line}}
+            $reader=if($stream -eq 'stdout'){$Process.StandardOutput}else{$Process.StandardError}
+            while($null -ne ($line=$reader.ReadLine())){Write-Output $line}
+        }
+        if(!$ready){throw 'Owned service exited before readiness was confirmed.'}
+        if($Process.ExitCode -ne 0){throw ('Local owned process failed (exit '+$Process.ExitCode+').')}
+    }finally{Stop-LocalOwnedProcess $Process;$Process.Dispose()}
+}
+
+function Invoke-LocalNative([string]$Executable,[string[]]$Arguments,[string]$ReadyAddress=''){
+    if($Executable -eq 'go'){
+        Assert-LocalMemoryAdmission Go
+        $process=Start-LocalOwnedProcess $Executable $Arguments
+        Wait-LocalOwnedProcess $process -ReadyAddress $ReadyAddress
+        return
+    }
     & $Executable @Arguments
     if($LASTEXITCODE -ne 0){throw ('Local command failed: '+$Executable+' (exit '+$LASTEXITCODE+').')}
 }

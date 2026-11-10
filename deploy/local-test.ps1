@@ -8,12 +8,30 @@ $global:localModelMode='empty'
 $global:localModelState=$null
 $global:localModelCalls=[Collections.Generic.List[string]]::new()
 $global:localModelGoCalls=0;$global:localModelGoFail=$false;$global:localModelGoExplicit=$false
-function global:go {
-    if($args -notcontains './cmd/tools/local_check' -or $args -contains './cmd/tools/v2_migrate'){throw 'Existing Check invoked a writing tool.'}
+$global:localModelCommitMB=8192;$global:localModelPhysicalMB=8192;$global:localModelMemoryUnavailable=$false
+function global:Get-CimInstance {
+    if($global:localModelMemoryUnavailable){throw 'Unavailable model counters.'}
+    [pscustomobject]@{FreeVirtualMemory=$global:localModelCommitMB*1024;FreePhysicalMemory=$global:localModelPhysicalMB*1024}
+}
+function New-LocalModelProcess([int]$ExitCode=0,[int]$ExitAfterWaits=1){
+    $process=[pscustomobject]@{HasExited=$false;ExitCode=$ExitCode;waits=0;exit_after=$ExitAfterWaits;killed=$false;disposed=$false;StandardOutput=[IO.StringReader]::new("Fake owned process output.`n");StandardError=[IO.StringReader]::new('')}
+    $process|Add-Member ScriptMethod WaitForExit {param($milliseconds);$this.waits++;if($this.waits -ge $this.exit_after){$this.HasExited=$true};return $this.HasExited}
+    $process|Add-Member ScriptMethod Kill {param($entireTree);if(!$entireTree){throw 'Owned process cleanup must cover its own children.'};$this.killed=$true;$this.HasExited=$true}
+    $process|Add-Member ScriptMethod Dispose {$this.disposed=$true;$this.StandardOutput.Dispose();$this.StandardError.Dispose()}
+    $process
+}
+function Start-LocalOwnedProcess([string]$Executable,[string[]]$Arguments){
+    if($Arguments -notcontains './cmd/tools/local_check' -or $Arguments -contains './cmd/tools/v2_migrate'){throw 'Existing Check invoked a writing tool.'}
     $global:localModelGoCalls++
     $global:localModelGoExplicit=$env:DB_NAME -eq 'game_realtime' -and $env:DB_PASSWORD -ne 'caller-value-not-a-secret' -and !$env:PVE_TEST_EVENTS_ENABLED -and !$env:DC_GAME_ENABLED
-    $global:LASTEXITCODE=if($global:localModelGoFail){9}else{0}
-    Write-Output 'Fake read-only storage check; no Go process started.'
+    New-LocalModelProcess -ExitCode $(if($global:localModelGoFail){9}else{0})
+}
+function Invoke-LocalModelEntry {
+    # Execute the unchanged entry logic against the functions loaded above.
+    # Only its repeated dot-source is omitted so mocks remain in this test scope.
+    $source=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'local.ps1'))
+    $source=$source.Replace(". (Join-Path `$PSScriptRoot 'local-common.ps1')",'')
+    & ([scriptblock]::Create($source)) @args
 }
 function global:docker {
     $arguments=@($args);$global:LASTEXITCODE=0
@@ -91,26 +109,58 @@ try{
     Assert-Model ($calls -eq $global:localModelCalls.Count) 'reading Existing configuration performs no Docker action'
     $env:DB_PASSWORD='caller-value-not-a-secret';$env:PVE_TEST_EVENTS_ENABLED='true'
     $untouched=Join-Path $testRoot 'existing-unused-state'
-    & (Join-Path $PSScriptRoot 'local.ps1') -Profile Existing -Action Check -StateRoot $untouched -ConfigPath $existingPath|Out-Null
+    Invoke-LocalModelEntry -Profile Existing -Action Check -StateRoot $untouched -ConfigPath $existingPath|Out-Null
     Assert-Model ($global:localModelGoCalls -eq 1 -and $global:localModelGoExplicit) 'Existing Check calls only the bounded read-only tool with explicit sanitized environment'
     Assert-Model (!(Test-Path -LiteralPath $untouched) -and $calls -eq $global:localModelCalls.Count) 'Existing Check creates no state and invokes no Docker operations'
     Assert-Model ($env:DB_PASSWORD -eq 'caller-value-not-a-secret' -and $env:PVE_TEST_EVENTS_ENABLED -eq 'true') 'Existing Check restores caller environment'
     $global:localModelGoFail=$true
-    Assert-ModelReject {& (Join-Path $PSScriptRoot 'local.ps1') -Profile Existing -Action Check -StateRoot $untouched -ConfigPath $existingPath} 'failed Existing Check remains a failure'
+    Assert-ModelReject {Invoke-LocalModelEntry -Profile Existing -Action Check -StateRoot $untouched -ConfigPath $existingPath} 'failed Existing Check remains a failure'
     Assert-Model ($env:DB_PASSWORD -eq 'caller-value-not-a-secret' -and $env:PVE_TEST_EVENTS_ENABLED -eq 'true') 'failed Existing Check also restores caller environment'
     $global:localModelGoFail=$false
+    if($IsWindows){
+        $beforeGo=$global:localModelGoCalls
+        $global:localModelCommitMB=1791
+        Assert-ModelReject {Invoke-LocalModelEntry -Profile Existing -Action Check -StateRoot $untouched -ConfigPath $existingPath} 'Go admission rejects below 1792 MiB commit before creating a process'
+        Assert-Model ($beforeGo -eq $global:localModelGoCalls) 'rejected memory admission starts no Go process'
+        $global:localModelCommitMB=2687;$global:localModelPhysicalMB=1536
+        Assert-ModelReject {Assert-LocalMemoryAdmission ServicesStart} 'storage startup rejects below 2688 MiB commit'
+        $global:localModelCommitMB=8192;$global:localModelPhysicalMB=1023
+        Assert-ModelReject {Assert-LocalMemoryAdmission Go} 'Go admission rejects below 1024 MiB physical'
+        $global:localModelCommitMB=1792;$global:localModelPhysicalMB=1024
+        Assert-LocalMemoryAdmission Go
+        $global:localModelCommitMB=2688;$global:localModelPhysicalMB=1536
+        Assert-LocalMemoryAdmission ServicesStart
+        Assert-Model $true 'exact Go and storage admission thresholds are preserved'
+        $global:localModelMemoryUnavailable=$true
+        Assert-ModelReject {Assert-LocalMemoryAdmission Go} 'unavailable Windows memory counters fail closed'
+        $global:localModelMemoryUnavailable=$false
+        $global:localModelCommitMB=1023;$global:localModelPhysicalMB=8192
+        $guarded=New-LocalModelProcess -ExitAfterWaits 100
+        Assert-ModelReject {Wait-LocalOwnedProcess $guarded} 'running owned process stops below the unchanged 1 GiB commit reserve'
+        Assert-Model ($guarded.killed -and $guarded.disposed) 'guard failure cleans only the observed owned process tree'
+        $global:localModelCommitMB=8192;$global:localModelPhysicalMB=511
+        Assert-ModelReject {Assert-LocalMemoryReserve} 'running reserve also rejects below 512 MiB physical'
+        $global:localModelCommitMB=8192;$global:localModelPhysicalMB=8192
+    }
+    function Test-LocalReadiness([string]$Address){return $true}
+    $readyProcess=New-LocalModelProcess -ExitAfterWaits 2
+    Wait-LocalOwnedProcess $readyProcess -ReadyAddress 'http://127.0.0.1:18080/ready'|Out-Null
+    Assert-Model ($readyProcess.disposed -and !$readyProcess.killed) 'readiness is confirmed while the owned server runs'
+    function Test-LocalReadiness([string]$Address){return $false}
+    $earlyExit=New-LocalModelProcess
+    Assert-ModelReject {Wait-LocalOwnedProcess $earlyExit -ReadyAddress 'http://127.0.0.1:18080/ready'} 'server exit before readiness remains a failure'
     $existing.environment|Add-Member -NotePropertyName Execute -NotePropertyValue 'throw malicious-config'
     Write-LocalJson $existingPath $existing
     Assert-ModelReject {Read-LocalExistingEnvironment $localContext $existingPath} 'unknown executable-style configuration keys are rejected without evaluation'
     $existing.environment.PSObject.Properties.Remove('Execute');$existing.environment.DB_NAME='game_realtime_dc_demo';Write-LocalJson $existingPath $existing
     Assert-ModelReject {Read-LocalExistingEnvironment $localContext $existingPath} 'Existing refuses the separate Dungeon Contract database'
     foreach($action in @('Prepare','ServicesStart','ServicesStop','Initialize','CreateAdmin')){
-        Assert-ModelReject {& (Join-Path $PSScriptRoot 'local.ps1') -Profile Existing -Action $action -ConfigPath $existingPath} ('Existing refuses '+$action)
+        Assert-ModelReject {Invoke-LocalModelEntry -Profile Existing -Action $action -ConfigPath $existingPath} ('Existing refuses '+$action)
     }
     [pscustomobject]@{status='PASS_LOCAL_LAUNCHER_MODELS';cases=$testCases.Count;checks=$testCases.ToArray();docker_started=$false;go_compiled=$false;credentials_printed=$false}|ConvertTo-Json -Depth 5
 }finally{
     Remove-Item Function:/docker -ErrorAction SilentlyContinue
-    Remove-Item Function:/go -ErrorAction SilentlyContinue
+    Remove-Item Function:/Get-CimInstance -ErrorAction SilentlyContinue
     $env:DB_PASSWORD=$originalPassword;$env:PVE_TEST_EVENTS_ENABLED=$originalTestFlag
     if(Test-Path -LiteralPath $testRoot){
         $checked=[IO.Path]::GetFullPath($testRoot)
