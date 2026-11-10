@@ -118,7 +118,7 @@ jobs:
         app: [gm-admin, pve-demo]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -176,7 +176,7 @@ jobs:
         with:
           go-version: 1.27.3
           cache-dependency-path: backend/go.sum
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Install locked frontend dependencies and isolated browser tooling
