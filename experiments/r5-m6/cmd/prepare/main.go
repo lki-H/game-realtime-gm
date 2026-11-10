@@ -205,5 +205,17 @@ func prepare(adminPath, output string) error {
 	if err := writePrivate(output, cfg); err != nil {
 		return err
 	}
+	for _, role := range []string{"rpc", "bridge", "publisher", "consumer", "ops"} {
+		roleConfig, err := cfg.ForRole(role)
+		if err != nil {
+			return err
+		}
+		if err := writePrivate(filepath.Join(filepath.Dir(output), role+".json"), roleConfig); err != nil {
+			return err
+		}
+	}
+	if err := writePrivate(filepath.Join(filepath.Dir(output), "query.json"), experiment.QueryConfig{RPCAddress: cfg.RPCAddress}); err != nil {
+		return err
+	}
 	return writePrivate(filepath.Join(filepath.Dir(output), "clients.json"), map[string]string{"r5-report-client": readerToken, "r5-observer": observerToken})
 }

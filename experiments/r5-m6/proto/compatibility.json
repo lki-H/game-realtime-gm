@@ -1,5 +1,6 @@
 {
   "package": "pve.reporting.v1",
+  "service_name": "pve.reporting.v1.Reporting",
   "service": ["GetLeaderboard", "GetRunResult"],
   "methods": {
     "GetLeaderboard": "pve.reporting.v1.GetLeaderboardRequest:pve.reporting.v1.GetLeaderboardResponse",
