@@ -1,5 +1,12 @@
 # 本地部署、运维与排障手册
 
+> 文档角色：当前V2／GM的启动、维护与故障排查
+> 权威级别：L1
+> 状态：已按维护边界更新
+> 适用范围：本机及隔离测试，不适用于公网生产部署
+> 事实来源：当前配置、启动器、迁移工具和对应CI
+> 最后更新：2026-11-10
+
 本文是当前运行入口。2026-11-10维护收口后，新安装统一采用`deploy/local.ps1`；原手工schema／seed和固定容器步骤不再作为新安装指南。历史命令与当时成绩保留在Git基线`401247d`及各阶段验收中，不据此改动已有数据。
 
 ## 1. 运行方式
@@ -60,6 +67,8 @@ Server在前台运行，确认`http://127.0.0.1:18080/ready`，按Ctrl+C结束�
 
 Existing配置见[示例](../deploy/local-existing.example.json)，配置和秘密应放仓库外；Check仅查询结构、迁移账本checksum和RedisPING。Server会执行Recover／Worker与正常业务写入，同库其他服务必须先停，不应把Server当只读检查。
 
+既有数据库的手工R4升级不属于Existing动作。先按[备份与恢复](backup-and-recovery.md)在新恢复库验证备份，再依据[R4维护与切换](design/v2-r4-implementation.md)排空、停止同库写服务。由操作者在专用终端显式注入原目标的DB配置和原密码，设置`V2_MIGRATION_CONFIRM=I_UNDERSTAND_V2_MIGRATION`，在backend目录运行`go run -p 1 ./cmd/tools/v2_migrate -stage r4`。检查退出码；dirty、checksum或结构不一致须停止核查，不手改账本或重复执行SQL。迁移后用原Existing配置重新Check、核对事实和账本，再恢复服务。该流程不授权覆盖原库、导入固定seed或把Dungeon Contract数据库当目标。
+
 ## 4. 排障、诊断与恢复
 
 - 内存：重任务串行，Windows依赖启动准入2688MiB提交／1536MiB物理，Go准入1792MiB／1024MiB。自有Go进程维持1GiB／512MiB保留线；Compose只做启动准入，不宣称容器持续受保护。
@@ -70,7 +79,9 @@ Existing配置见[示例](../deploy/local-existing.example.json)，配置和秘�
 - 依赖：检查自有容器健康和仅本机连接；日志保存在仓库外，分享前脱敏。不要重新导入固定seed排除认证故障。
 - 恢复：先做仓库外备份并在新库验证；按[备份恢复规则](backup-and-recovery.md)使用隔离目标，不能把旧备份覆盖已产生新奖励的活动库。
 
-pprof、独立metrics、测试事件只用于有明确需要的本机诊断，使用各自独立凭据及预算，诊断后关闭。启用这些高级配置需要直接显式配置服务，统一本机入口不会从调用方继承开启标记。原本机监控模板不等于公网可观测平台，Prometheus/Grafana及其秘密须与游戏环境隔离。
+pprof、独立metrics、测试事件只用于有明确需要的本机诊断，使用各自独立凭据及预算，诊断后关闭。启用这些高级配置需要先停止统一入口服务，再在专用终端直接显式配置完整服务环境；统一本机入口不会从调用方继承开启标记。pprof保持loopback，结束后恢复原环境。
+
+监控模板见[Compose](../deploy/docker-compose.monitoring.yml)、[Prometheus配置](../deploy/monitoring/prometheus.example.yml)、[告警规则](../deploy/monitoring/alerts.yml)和[仪表板](../deploy/monitoring/dashboard.json)。这些只是本机演练模板，使用前核对独立凭据与绑定；不能冒作共享告警平台或公网监控，秘密不进入仓库和公开日志。
 
 ## 5. R5、维护与发布
 
