@@ -15,7 +15,7 @@
 
 ## 安全本机启动
 
-需要PowerShell 7.4或更新版本、Docker Linux引擎和Go。go.mod的1.25.6是模块最低要求；CI／Docker固定1.27.1是本项目当前验证工具链，二者不是同一个声明。完整步骤见[启动指南](docs/pve-release-guide.md)。
+需要PowerShell 7.4或更新版本、Docker Linux引擎和Go。go.mod的1.26.0是模块最低要求；CI／Docker固定1.27.3是本项目当前验证工具链，二者不是同一个声明。本机运行也应安装1.27.3，避免用尚未修复已知安全问题的较低版本构建；入口的GOTOOLCHAIN=local不会自动下载安装工具链。完整步骤见[启动指南](docs/pve-release-guide.md)。
 
 ```powershell
 ./deploy/local.ps1 -Action Prepare

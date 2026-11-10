@@ -146,7 +146,7 @@ try {
     $linuxCache = Join-Path $EvidenceRoot 'go-build-linux'
     $moduleCache = (go env GOMODCACHE).Trim()
     New-Item -ItemType Directory -Force -Path $linuxCache | Out-Null
-    docker run --rm --name gm-r5-race --network gm-r5-verify_default -v "${moduleRoot}:/work:ro" -v "${evidence}:/evidence:ro" -v "${moduleCache}:/gomodcache" -v "${linuxCache}:/gocache" -w /work -e GOMODCACHE=/gomodcache -e GOCACHE=/gocache -e GOPROXY=https://proxy.golang.org,direct -e R5_INTEGRATION=1 -e R5_CONFIG=/evidence/runtime.json -e R5_ADMIN_CONFIG=/evidence/admin.json -e R5_TEST_NETWORK=compose -e R5_PROCESS_BINARY=/evidence/bin/r5-linux golang:1.27.1-bookworm go test -race -count=1 -timeout 180s ./... | Tee-Object -FilePath (Join-Path $evidence 'race.log')
+    docker run --rm --name gm-r5-race --network gm-r5-verify_default -v "${moduleRoot}:/work:ro" -v "${evidence}:/evidence:ro" -v "${moduleCache}:/gomodcache" -v "${linuxCache}:/gocache" -w /work -e GOMODCACHE=/gomodcache -e GOCACHE=/gocache -e GOPROXY=https://proxy.golang.org,direct -e R5_INTEGRATION=1 -e R5_CONFIG=/evidence/runtime.json -e R5_ADMIN_CONFIG=/evidence/admin.json -e R5_TEST_NETWORK=compose -e R5_PROCESS_BINARY=/evidence/bin/r5-linux golang:1.27.3-bookworm go test -race -count=1 -timeout 180s ./... | Tee-Object -FilePath (Join-Path $evidence 'race.log')
     Assert-Exit 'Linux race with real MySQL and RabbitMQ'
     Read-SQL 'DELETE FROM game_realtime_r5_reports.r5_report_runs; DELETE FROM game_realtime_r5_reports.r5_receipts; DELETE FROM game_realtime_r5_reports.r5_deliveries; DELETE FROM game_realtime_r5_reports.r5_scan_state;' | Out-Null
     Start-Role 'rpc'; Start-Role 'bridge'; Start-Role 'publisher'

@@ -35,7 +35,7 @@ flowchart LR
 
 ## 环境与入口
 
-需要 Go 1.25.6 或兼容的更新版本、Docker Compose、.NET 10、PowerShell 7。生成契约另需 Protoc 36.2、protoc-gen-go 1.36.12 和 protoc-gen-go-grpc 1.6.2，可直接放在 PATH，或向生成脚本传 `-ToolsRoot`。固定 gRPC Go 1.84.0、Protobuf 1.36.12、AMQP Go 客户端 1.15.0、RabbitMQ 4.3.6；镜像内包含 Erlang，无需安装原生 Windows 服务。
+模块最低要求 Go 1.26.0；当前验证及容器工具链固定为1.27.3，本机执行也应使用该修复版本。另需 Docker Compose、.NET 10、PowerShell 7。生成契约另需 Protoc 36.2、protoc-gen-go 1.36.12 和 protoc-gen-go-grpc 1.6.2，可直接放在 PATH，或向生成脚本传 `-ToolsRoot`。固定 gRPC Go 1.84.0、Protobuf 1.36.12、AMQP Go 客户端 1.15.0、RabbitMQ 4.3.6；镜像内包含 Erlang，无需安装原生 Windows 服务。本轮仅修复工具链与可达依赖告警，不重新生成v1契约或沿用旧工具链的验收成绩。
 
 普通检查不启动依赖：
 
