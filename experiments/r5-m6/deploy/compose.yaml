@@ -51,11 +51,12 @@ services:
       retries: 40
   main:
     profiles: ["main"]
-    image: golang:1.27.1-bookworm
+    image: golang:1.27.3-bookworm
     command: ["/r5/bin/main-linux"]
     environment:
       GAMEPLAY_MODE: v2
       APP_PORT: "8080"
+      APP_HOST: "0.0.0.0"
       DB_HOST: mysql
       DB_PORT: "23306"
       DB_NAME: game_realtime_v2_test

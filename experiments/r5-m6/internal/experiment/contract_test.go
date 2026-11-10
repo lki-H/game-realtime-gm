@@ -40,10 +40,11 @@ func TestContractBaselineAndUnknownFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	var baseline struct {
-		Package  string
-		Service  []string
-		Methods  map[string]string
-		Messages map[string]map[string]string
+		Package     string
+		ServiceName string `json:"service_name"`
+		Service     []string
+		Methods     map[string]string
+		Messages    map[string]map[string]string
 	}
 	if err := json.Unmarshal(data, &baseline); err != nil {
 		t.Fatal(err)
@@ -51,6 +52,9 @@ func TestContractBaselineAndUnknownFields(t *testing.T) {
 	descriptor := reportingv1.File_reporting_proto
 	if string(descriptor.Package()) != baseline.Package {
 		t.Fatal("protobuf package changed")
+	}
+	if descriptor.Services().Len() != 1 || string(descriptor.Services().Get(0).FullName()) != baseline.ServiceName {
+		t.Fatal("RPC full service name changed")
 	}
 	for _, method := range baseline.Service {
 		if descriptor.Services().Get(0).Methods().ByName(protoname(method)) == nil {

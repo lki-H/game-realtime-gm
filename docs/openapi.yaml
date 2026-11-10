@@ -6,6 +6,8 @@ info:
   summary: 当前单体 Go 服务的 HTTP 机器契约
   description: |
     本文件描述 `backend/internal/router/router.go` 中的 legacy 公共 HTTP 及 V2 查询接口。
+    当前推荐新安装通过安全本机入口，默认 http://127.0.0.1:18080；旧环境8080仅作显式配置。
+    Bearer格式统一解析，JWT必须含有效期限；注册密码另检查bcrypt的72字节上限。
     V2 路径仅在 GAMEPLAY_MODE=v2 中注册，内部事件监听器不属于公共契约。
     所有 HTTP 响应都包含 `X-Request-ID` 响应头。WebSocket `/ws` 的连接与消息契约
     由 `docs/ws-protocol.md` 单独维护，不在 OpenAPI 中建模业务消息。
@@ -20,6 +22,8 @@ x-document-metadata:
   fact-source: backend/internal/router/router.go 与当前 Handler
   last-updated: 2026-10-10
 servers:
+  - url: http://127.0.0.1:18080
+    description: 默认隔离本机入口
   - url: http://localhost:8080
     description: 本地开发服务
 tags:

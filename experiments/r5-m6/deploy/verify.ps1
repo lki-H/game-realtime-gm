@@ -9,7 +9,7 @@ $projectName = 'gm-r5-verify'
 $roles = @{}
 $composeStarted = $false
 $evidence = Join-Path $EvidenceRoot ([guid]::NewGuid().ToString('N'))
-$variables = @('PVE_TEST_PASSWORD','PVE_INTEGRATION','PVE_TEST_NETWORK','R5_ADMIN_PASSWORD','R5_MAIN_JWT','R5_MAIN_EVENT_TOKEN','R5_MAIN_PLAYER_PASSWORD','R5_BINARY_DIRECTORY','DB_HOST','DB_PORT','DB_NAME','DB_USER','DB_PASSWORD','GAMEPLAY_MODE','V2_MIGRATION_CONFIRM','V2_BACKUP_CONFIRM','R5_INTEGRATION','R5_CONFIG','R5_ADMIN_CONFIG','R5_ACCEPTANCE_FAULT','GOOS','GOARCH','CGO_ENABLED','NUGET_PACKAGES','DOTNET_CLI_HOME','DOTNET_CLI_TELEMETRY_OPTOUT','DOTNET_GENERATE_ASPNET_CERTIFICATE')
+$variables = @('PVE_TEST_PASSWORD','PVE_INTEGRATION','PVE_TEST_NETWORK','R5_ADMIN_PASSWORD','R5_MAIN_JWT','R5_MAIN_EVENT_TOKEN','R5_MAIN_PLAYER_PASSWORD','R5_BINARY_DIRECTORY','DB_HOST','DB_PORT','DB_NAME','DB_USER','DB_PASSWORD','JWT_SECRET','APP_HOST','GAMEPLAY_MODE','V2_MIGRATION_CONFIRM','V2_BACKUP_CONFIRM','R5_INTEGRATION','R5_CONFIG','R5_ADMIN_CONFIG','R5_ACCEPTANCE_FAULT','R5_PROCESS_BINARY','GOOS','GOARCH','CGO_ENABLED','NUGET_PACKAGES','DOTNET_CLI_HOME','DOTNET_CLI_TELEMETRY_OPTOUT','DOTNET_GENERATE_ASPNET_CERTIFICATE')
 $previous = @{}
 foreach ($name in $variables) { $previous[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
 function New-Secret {
@@ -34,7 +34,8 @@ function Read-SQL([string]$Query) {
 }
 function Start-Role([string]$Role) {
     $binary = Join-Path $evidence 'bin/r5.exe'
-    $process = Start-Process -FilePath $binary -ArgumentList @('-mode',$Role,'-config', ('"'+$runtimeConfig+'"')) -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $evidence "$Role.stdout.log") -RedirectStandardError (Join-Path $evidence "$Role.stderr.log")
+    $roleConfig = Join-Path $evidence "$Role.json"
+    $process = Start-Process -FilePath $binary -ArgumentList @('-mode',$Role,'-config', ('"'+$roleConfig+'"')) -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $evidence "$Role.stdout.log") -RedirectStandardError (Join-Path $evidence "$Role.stderr.log")
     $roles[$Role] = $process
 }
 function Stop-Role([string]$Role) {
@@ -77,7 +78,13 @@ try {
     $env:DB_NAME = 'game_realtime_v2_test'
     $env:DB_USER = 'pve_test'
     $env:DB_PASSWORD = $env:PVE_TEST_PASSWORD
+    $env:JWT_SECRET = $env:R5_MAIN_JWT
+    $env:APP_HOST = '127.0.0.1'
     $env:GAMEPLAY_MODE = 'v2'
+    $env:R5_INTEGRATION = ''
+    $env:R5_CONFIG = ''
+    $env:R5_ADMIN_CONFIG = ''
+    $env:R5_PROCESS_BINARY = ''
     $env:V2_MIGRATION_CONFIRM = 'I_UNDERSTAND_V2_MIGRATION'
     $env:V2_BACKUP_CONFIRM = 'I_UNDERSTAND_V2_BACKUP'
     $env:NUGET_PACKAGES = Join-Path $EvidenceRoot 'nuget-packages'
@@ -90,8 +97,15 @@ try {
         go vet ./...; Assert-Exit 'R5 vet'
         go build -o (Join-Path $evidence 'bin/r5.exe') ./cmd/r5; Assert-Exit 'R5 role binary'
         go build -o (Join-Path $evidence 'bin/query.exe') ./cmd/query; Assert-Exit 'R5 client binary'
+        go build -o (Join-Path $evidence 'bin/r5ops.exe') ./cmd/r5ops; Assert-Exit 'R5 inspection and controlled retry binary'
         go build -o (Join-Path $evidence 'bin/prepare.exe') ./cmd/prepare; Assert-Exit 'R5 provisioning binary'
         dotnet run --project gen/csharp/ContractCheck.csproj -c Release --no-launch-profile; Assert-Exit 'C# contract'
+        try {
+            $env:GOOS = 'linux'; $env:GOARCH = 'amd64'; $env:CGO_ENABLED = '0'
+            go build -o (Join-Path $evidence 'bin/r5-linux') ./cmd/r5; Assert-Exit 'Linux role process fixture'
+        } finally {
+            foreach ($name in @('GOOS','GOARCH','CGO_ENABLED')) { [Environment]::SetEnvironmentVariable($name,$previous[$name],'Process') }
+        }
     } finally { Pop-Location }
     Push-Location $backendRoot
     try {
@@ -121,17 +135,18 @@ try {
     & (Join-Path $evidence 'bin/backup.exe') -action restore -container gm-r5-verify-mysql-1 -database game_realtime_v2_r5_restore -file $backup; Assert-Exit 'Isolated fixture restore'
     $adminConfig = Join-Path $evidence 'admin.json'
     $runtimeConfig = Join-Path $evidence 'runtime.json'
+    $queryConfig = Join-Path $evidence 'query.json'
     $admin = @{root_db=@{address='127.0.0.1:23306';name='game_realtime_v2_r5_restore';user='root';password=$env:PVE_TEST_PASSWORD};broker=@{address='127.0.0.1:25672';vhost='r5';user='r5_admin';password=$env:R5_ADMIN_PASSWORD};management_address='127.0.0.1:25673'}
     [IO.File]::WriteAllText($adminConfig,($admin | ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
     Push-Location $moduleRoot
     try { & (Join-Path $evidence 'bin/prepare.exe') -admin $adminConfig -output $runtimeConfig; Assert-Exit 'Least-privilege provisioning' } finally { Pop-Location }
-    $env:R5_CONFIG = $runtimeConfig; $env:R5_ADMIN_CONFIG = $adminConfig; $env:R5_INTEGRATION = '1'
+    $env:R5_CONFIG = $runtimeConfig; $env:R5_ADMIN_CONFIG = $adminConfig; $env:R5_INTEGRATION = '1'; $env:R5_PROCESS_BINARY = Join-Path $evidence 'bin/r5.exe'
     Push-Location $moduleRoot
     try { go test -count=1 -v -timeout 180s ./internal/experiment | Tee-Object -FilePath (Join-Path $evidence 'integration.log'); Assert-Exit 'Real MySQL and RabbitMQ integration' } finally { Pop-Location }
     $linuxCache = Join-Path $EvidenceRoot 'go-build-linux'
     $moduleCache = (go env GOMODCACHE).Trim()
     New-Item -ItemType Directory -Force -Path $linuxCache | Out-Null
-    docker run --rm --name gm-r5-race --network gm-r5-verify_default -v "${moduleRoot}:/work:ro" -v "${evidence}:/evidence:ro" -v "${moduleCache}:/gomodcache" -v "${linuxCache}:/gocache" -w /work -e GOMODCACHE=/gomodcache -e GOCACHE=/gocache -e GOPROXY=https://proxy.golang.org,direct -e R5_INTEGRATION=1 -e R5_CONFIG=/evidence/runtime.json -e R5_ADMIN_CONFIG=/evidence/admin.json -e R5_TEST_NETWORK=compose golang:1.27.1-bookworm go test -race -count=1 -timeout 180s ./... | Tee-Object -FilePath (Join-Path $evidence 'race.log')
+    docker run --rm --name gm-r5-race --network gm-r5-verify_default -v "${moduleRoot}:/work:ro" -v "${evidence}:/evidence:ro" -v "${moduleCache}:/gomodcache" -v "${linuxCache}:/gocache" -w /work -e GOMODCACHE=/gomodcache -e GOCACHE=/gocache -e GOPROXY=https://proxy.golang.org,direct -e R5_INTEGRATION=1 -e R5_CONFIG=/evidence/runtime.json -e R5_ADMIN_CONFIG=/evidence/admin.json -e R5_TEST_NETWORK=compose -e R5_PROCESS_BINARY=/evidence/bin/r5-linux golang:1.27.3-bookworm go test -race -count=1 -timeout 180s ./... | Tee-Object -FilePath (Join-Path $evidence 'race.log')
     Assert-Exit 'Linux race with real MySQL and RabbitMQ'
     Read-SQL 'DELETE FROM game_realtime_r5_reports.r5_report_runs; DELETE FROM game_realtime_r5_reports.r5_receipts; DELETE FROM game_realtime_r5_reports.r5_deliveries; DELETE FROM game_realtime_r5_reports.r5_scan_state;' | Out-Null
     Start-Role 'rpc'; Start-Role 'bridge'; Start-Role 'publisher'
@@ -145,7 +160,7 @@ try {
     Start-Role 'consumer'
     Wait-Until 'ACK recovery and projection' { [int](Read-SQL "SELECT COUNT(*) FROM game_realtime_r5_reports.r5_receipts WHERE status='applied';") -ge 1 }
     Start-Sleep -Seconds 1
-    & (Join-Path $evidence 'bin/query.exe') -config $runtimeConfig -clients (Join-Path $evidence 'clients.json'); Assert-Exit 'Independent real RPC client'
+    & (Join-Path $evidence 'bin/query.exe') -config $queryConfig -clients (Join-Path $evidence 'clients.json'); Assert-Exit 'Independent real RPC client'
     $clients = Get-Content (Join-Path $evidence 'clients.json') -Raw | ConvertFrom-Json
     $headers = @{'X-Service-ID'='r5-observer';Authorization=('Bearer '+$clients.'r5-observer')}
     $metrics = (Invoke-WebRequest http://127.0.0.1:18094/metrics -Headers $headers -TimeoutSec 5).Content
@@ -158,20 +173,24 @@ try {
     Wait-Until 'Durable queue backlog' { $statistics = docker exec gm-r5-verify-rabbitmq-1 rabbitmqctl -q list_queues -p r5 name messages_ready; Assert-Exit 'Backlog query'; [bool]($statistics -match 'r5.reports\s+[1-9]') }
     Verify-Main 'Consumer stopped'
     docker compose -f $compose stop rabbitmq; Assert-Exit 'Broker fault injection'
+    Start-Role 'rpc'
+    Wait-Until 'RPC with no broker or projection credentials' { & (Join-Path $evidence 'bin/query.exe') -config $queryConfig -clients (Join-Path $evidence 'clients.json') *> $null; $LASTEXITCODE -eq 0 }
     Verify-Main 'Broker stopped'
+    Stop-Role 'rpc'
     docker compose -f $compose up -d --wait --wait-timeout 120 rabbitmq; Assert-Exit 'Broker restart'
     $statistics = docker exec gm-r5-verify-rabbitmq-1 rabbitmqctl -q list_queues -p r5 name messages_ready
     Assert-Exit 'Persisted backlog query'
     if (-not ($statistics -match 'r5.reports\s+[1-9]')) { throw 'Broker restart lost confirmed backlog.' }
     Start-Role 'consumer'; Start-Role 'rpc'
-    Wait-Until 'RPC service restart' { & (Join-Path $evidence 'bin/query.exe') -config $runtimeConfig -clients (Join-Path $evidence 'clients.json') *> $null; $LASTEXITCODE -eq 0 }
+    Wait-Until 'RPC service restart' { & (Join-Path $evidence 'bin/query.exe') -config $queryConfig -clients (Join-Path $evidence 'clients.json') *> $null; $LASTEXITCODE -eq 0 }
     docker compose -f $compose stop main; Assert-Exit 'Stop primary fixture for independent query'
-    & (Join-Path $evidence 'bin/query.exe') -config $runtimeConfig -clients (Join-Path $evidence 'clients.json'); Assert-Exit 'RPC independent from primary service'
+    & (Join-Path $evidence 'bin/query.exe') -config $queryConfig -clients (Join-Path $evidence 'clients.json'); Assert-Exit 'RPC independent from primary service'
     docker compose -f $compose stop mysql; Assert-Exit 'Source database fault injection'
-    & (Join-Path $evidence 'bin/query.exe') -config $runtimeConfig -clients (Join-Path $evidence 'clients.json') *> $null
+    & (Join-Path $evidence 'bin/query.exe') -config $queryConfig -clients (Join-Path $evidence 'clients.json') *> $null
     if ($LASTEXITCODE -eq 0) { throw 'Unavailable database returned fabricated query data.' }
     docker compose -f $compose up -d --wait --wait-timeout 120 mysql; Assert-Exit 'Source database restart'
-    Wait-Until 'Database client recovery' { & (Join-Path $evidence 'bin/query.exe') -config $runtimeConfig -clients (Join-Path $evidence 'clients.json') *> $null; $LASTEXITCODE -eq 0 }
+    Wait-Until 'Database client recovery' { & (Join-Path $evidence 'bin/query.exe') -config $queryConfig -clients (Join-Path $evidence 'clients.json') *> $null; $LASTEXITCODE -eq 0 }
+    & (Join-Path $evidence 'bin/r5ops.exe') -config (Join-Path $evidence 'ops.json') | Set-Content (Join-Path $evidence 'inspection.json') -Encoding utf8; Assert-Exit 'Reporting-only inspection'
     foreach ($role in @('rpc','bridge','publisher','consumer')) { Stop-Role $role }
     docker compose -f $compose --profile main up -d main; Assert-Exit 'Primary fixture rollback'
     Wait-Until 'Primary recovery' { try { (Invoke-WebRequest http://127.0.0.1:8080/health -TimeoutSec 2).StatusCode -eq 200 } catch { $false } }
@@ -183,7 +202,7 @@ try {
     foreach ($role in @($roles.Keys)) { Stop-Role $role }
     if ($composeStarted -and -not $KeepEnvironment) {
         docker compose -f $compose --profile main down -v; Assert-Exit 'R5 isolated resource cleanup'
-        foreach ($name in @('compose.env','admin.json','runtime.json','clients.json')) {
+        foreach ($name in @('compose.env','admin.json','runtime.json','clients.json','rpc.json','bridge.json','publisher.json','consumer.json','ops.json','query.json')) {
             $secretPath = Join-Path $evidence $name
             if (Test-Path -LiteralPath $secretPath) { Remove-Item -LiteralPath $secretPath }
         }

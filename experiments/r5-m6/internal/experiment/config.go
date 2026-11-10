@@ -1,11 +1,8 @@
 package experiment
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"net"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -47,19 +44,8 @@ type Config struct {
 
 func LoadConfig(path string) (Config, error) {
 	var cfg Config
-	file, err := os.Open(path)
-	if err != nil {
-		return cfg, errors.New("configuration cannot be opened")
-	}
-	defer file.Close()
-	decoder := json.NewDecoder(io.LimitReader(file, 65537))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&cfg) != nil {
-		return cfg, errors.New("configuration is invalid")
-	}
-	var extra any
-	if decoder.Decode(&extra) != io.EOF {
-		return cfg, errors.New("configuration has trailing data")
+	if err := readPrivateJSON(path, &cfg); err != nil {
+		return cfg, err
 	}
 	return cfg, cfg.Validate()
 }

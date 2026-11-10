@@ -1,0 +1,65 @@
+{
+  "description": "Reviewed V1 field encodings shared by Go and C#. CI must not regenerate these bytes. No maps or serialization-order claims for arbitrary schemas.",
+  "unknown_hex": "9a060c6675747572652d6669656c64",
+  "cases": [
+    {
+      "type": "GetLeaderboardRequest",
+      "hex": "080a",
+      "expected": {
+        "limit": 10
+      }
+    },
+    {
+      "type": "GetLeaderboardResponse",
+      "hex": "0a0808e90710c20318010a0808ea0710ac021802",
+      "expected": {
+        "entries": [
+          {
+            "playerId": "1001",
+            "score": "450",
+            "rank": 1
+          },
+          {
+            "playerId": "1002",
+            "score": "300",
+            "rank": 2
+          }
+        ]
+      }
+    },
+    {
+      "type": "GetRunResultRequest",
+      "hex": "0a1472756e5f636f6e74726163745f6669787475726510e907",
+      "expected": {
+        "runId": "run_contract_fixture",
+        "playerId": "1001"
+      }
+    },
+    {
+      "type": "GetRunResultResponse",
+      "hex": "0a1472756e5f636f6e74726163745f66697874757265120f747261696e696e675f67726f756e641a066e6f726d616c2207737563636573732a2008e907100118012096012a14323032362d31312d31305430303a30303a30305a2a1b08ea0720322a14323032362d31312d31305430303a30303a30315a",
+      "expected": {
+        "runId": "run_contract_fixture",
+        "operation": "training_ground",
+        "difficulty": "normal",
+        "endReason": "success",
+        "participants": [
+          {
+            "playerId": "1001",
+            "contributionQualified": true,
+            "taskCompleted": true,
+            "reward": "150",
+            "settledAt": "2026-11-10T00:00:00Z"
+          },
+          {
+            "playerId": "1002",
+            "contributionQualified": false,
+            "taskCompleted": false,
+            "reward": "50",
+            "settledAt": "2026-11-10T00:00:01Z"
+          }
+        ]
+      }
+    }
+  ]
+}

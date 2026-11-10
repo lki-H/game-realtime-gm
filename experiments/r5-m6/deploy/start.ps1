@@ -2,10 +2,9 @@ param([Parameter(Mandatory=$true)][string]$EnvironmentDirectory)
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 $directory = (Resolve-Path -LiteralPath $EnvironmentDirectory).Path
-$configuration = Join-Path $directory 'runtime.json'
 $environment = Join-Path $directory 'compose.env'
 $binary = [IO.Path]::GetFullPath((Join-Path $directory 'bin/r5.exe'))
-foreach ($path in @($configuration,$environment,$binary)) {
+foreach ($path in @($environment,$binary,(Join-Path $directory 'rpc.json'),(Join-Path $directory 'bridge.json'),(Join-Path $directory 'publisher.json'),(Join-Path $directory 'consumer.json'),(Join-Path $directory 'query.json'))) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'Use verify.ps1 -KeepEnvironment to prepare an isolated runtime first.' }
 }
 $existing = Join-Path $directory 'processes.json'
@@ -19,6 +18,7 @@ $oldFault = $env:R5_ACCEPTANCE_FAULT
 $env:R5_ACCEPTANCE_FAULT = ''
 try {
     foreach ($role in @('rpc','bridge','publisher','consumer')) {
+        $configuration = Join-Path $directory "$role.json"
         $process = Start-Process -FilePath $binary -ArgumentList @('-mode',$role,'-config',('"'+$configuration+'"')) -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $directory "$role.stdout.log") -RedirectStandardError (Join-Path $directory "$role.stderr.log")
         $records += @{role=$role;process_id=$process.Id;started_at=$process.StartTime.ToUniversalTime().ToString('o');executable=$binary}
         $records | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $existing -Encoding utf8

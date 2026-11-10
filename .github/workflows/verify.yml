@@ -2,27 +2,85 @@ name: Verify local PVE
 on:
   push:
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  backend:
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    outputs:
+      backend: ${{ steps.scope.outputs.backend }}
+      frontend: ${{ steps.scope.outputs.frontend }}
+      r5: ${{ steps.scope.outputs.r5 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: scope
+        run: python -B deploy/review_checks.py --classify
+  tooling:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Public source, links and protected bytes
+        run: python -B deploy/review_checks.py --json public-review.json
+      - name: Source tooling regression
+        run: python -B -m unittest discover -s deploy -p "test_*.py"
+      - name: PowerShell syntax
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($file in Get-ChildItem deploy -Filter '*.ps1') {
+            $tokens=$null; $errors=$null
+            [void][Management.Automation.Language.Parser]::ParseFile($file.FullName,[ref]$tokens,[ref]$errors)
+            if($errors.Count){throw ('PowerShell parse failed: '+$file.Name)}
+          }
+      - name: Local launcher ownership and Existing models
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./deploy/local-test.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-review-${{ matrix.os }}
+          path: public-review.json
+  backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: 1.27.1
+          go-version: 1.27.3
           cache-dependency-path: backend/go.sum
-      - name: Tests and vet
-        working-directory: backend
-        run: |
-          go test ./...
-          go vet ./...
-      - name: Isolated integration and race
+      - name: Tests, vet and module authenticity
         shell: bash
         working-directory: backend
         run: |
+          set -euo pipefail
+          go mod verify
+          go test -race -p 1 -count=1 -timeout 300s -json ./... | tee "$RUNNER_TEMP/unit-tests.jsonl"
+          python -B ../deploy/review_checks.py --test-events "$RUNNER_TEMP/unit-tests.jsonl" --kind unit --json "$RUNNER_TEMP/unit-summary.json"
+          go vet -p 1 ./...
+      - name: Isolated integration, race and actual rollback
+        shell: bash
+        working-directory: backend
+        run: |
+          set -euo pipefail
           export PVE_TEST_PASSWORD="$(openssl rand -hex 32)"
           echo "::add-mask::$PVE_TEST_PASSWORD"
           export PVE_INTEGRATION=1 GIN_MODE=release
@@ -38,12 +96,22 @@ jobs:
           export PVE_R3_SERVER_BINARY="$RUNNER_TEMP/pve-r3-server"
           go build -o "$PVE_R4_SERVER_BINARY" ./cmd/server
           (cd "$rollback_source/backend" && go build -o "$PVE_R3_SERVER_BINARY" ./cmd/server)
-          go test -race -count=1 -timeout 300s ./tests/v2
+          go test -race -p 1 -count=1 -timeout 300s -json ./tests/v2 | tee "$RUNNER_TEMP/storage-tests.jsonl"
+          python -B ../deploy/review_checks.py --test-events "$RUNNER_TEMP/storage-tests.jsonl" --kind integration --required TestWorkerDispatchAndAttemptFencing --required TestR4ActualBinarySwitchAndRollback --json "$RUNNER_TEMP/storage-summary.json"
       - name: Build service image
         run: |
-          docker build --tag "game-realtime-gm:r4-$GITHUB_SHA" backend
-          docker image inspect --format '{{.Id}}' "game-realtime-gm:r4-$GITHUB_SHA"
+          docker build --tag "game-realtime-gm:maintenance-$GITHUB_SHA" backend
+          docker image inspect --format '{{.Id}}' "game-realtime-gm:maintenance-$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-check-summaries
+          path: |
+            ${{ runner.temp }}/*-summary.json
+            ${{ runner.temp }}/*-tests.jsonl
   frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -56,6 +124,106 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/${{ matrix.app }}/package-lock.json
       - working-directory: frontend/${{ matrix.app }}
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Control regression
+        if: matrix.app == 'pve-demo'
+        working-directory: frontend/pve-demo
+        run: npm test
       - working-directory: frontend/${{ matrix.app }}
         run: npm run build
+  dependencies:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.r5 == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.27.3
+      - name: Go vulnerability reachability in both modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          vulnerability_status=0
+          for module in backend experiments/r5-m6; do
+            report="$RUNNER_TEMP/$(echo "$module" | tr / -)-vulnerabilities.json"
+            (cd "$module" && govulncheck -json ./...) > "$report" || vulnerability_status=1
+            python -B deploy/review_checks.py --vulnerabilities "$report" || vulnerability_status=1
+          done
+          exit "$vulnerability_status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: go-dependency-reports
+          path: ${{ runner.temp }}/*-vulnerabilities.json
+  local-smoke:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=1'
+      GM_BROWSER_SMOKE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.27.3
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install locked frontend dependencies and isolated browser tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GM_BROWSER_MODULE_ROOT="$RUNNER_TEMP/gm-browser"
+          echo "GM_BROWSER_MODULE_ROOT=$GM_BROWSER_MODULE_ROOT" >> "$GITHUB_ENV"
+          npm ci --prefix frontend/gm-admin --ignore-scripts --no-audit --no-fund
+          npm ci --prefix frontend/pve-demo --ignore-scripts --no-audit --no-fund
+          npm install --prefix "$GM_BROWSER_MODULE_ROOT" playwright@1.64.1 --ignore-scripts --no-audit --no-fund
+          "$GM_BROWSER_MODULE_ROOT/node_modules/.bin/playwright" install --with-deps --only-shell chromium
+      - name: Real empty installation, protected Existing Check and browser workflows
+        shell: pwsh
+        run: ./deploy/local-integration.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owned-local-installation-summary
+          path: ${{ runner.temp }}/gm-local-integration-summary.json
+  gate:
+    if: always()
+    needs: [changes, tooling, backend, frontend, dependencies, local-smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require relevant checks and reject canceled work
+        env:
+          CHANGE_RESULT: ${{ needs.changes.result }}
+          TOOLING_RESULT: ${{ needs.tooling.result }}
+          BACKEND_REQUIRED: ${{ needs.changes.outputs.backend }}
+          R5_REQUIRED: ${{ needs.changes.outputs.r5 }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          FRONTEND_REQUIRED: ${{ needs.changes.outputs.frontend }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          DEPENDENCY_RESULT: ${{ needs.dependencies.result }}
+          LOCAL_RESULT: ${{ needs.local-smoke.result }}
+        run: |
+          python - <<'PY'
+          import os
+          assert os.environ['CHANGE_RESULT']=='success'
+          assert os.environ['TOOLING_RESULT']=='success'
+          dependency_required=any(os.environ[k]=='true' for k in ('BACKEND_REQUIRED','R5_REQUIRED'))
+          assert os.environ['DEPENDENCY_RESULT']==('success' if dependency_required else 'skipped')
+          local_required=any(os.environ[k]=='true' for k in ('BACKEND_REQUIRED','FRONTEND_REQUIRED'))
+          assert os.environ['LOCAL_RESULT']==('success' if local_required else 'skipped')
+          for kind in ('BACKEND','FRONTEND'):
+              expected='success' if os.environ[kind+'_REQUIRED']=='true' else 'skipped'
+              assert os.environ[kind+'_RESULT']==expected, (kind, expected, os.environ[kind+'_RESULT'])
+          print('Relevant checks passed; documentation-only skips are explicit.')
+          PY

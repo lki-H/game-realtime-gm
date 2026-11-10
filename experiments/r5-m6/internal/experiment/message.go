@@ -105,3 +105,8 @@ func (envelope Envelope) Fingerprint() string {
 	encoded, _ := json.Marshal(envelope)
 	return Hash(encoded)
 }
+
+func normalizeEnvelope(envelope Envelope, report Report) Envelope {
+	envelope.Payload, _ = json.Marshal(report)
+	return envelope
+}

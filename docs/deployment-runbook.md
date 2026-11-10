@@ -1,271 +1,92 @@
 # 本地部署、运维与排障手册
 
-> 文档角色：环境准备、启动停止、诊断、发布演练与 Troubleshooting
-> 权威级别：L1（当前运行手册）
-> 状态：适用于本地/测试环境
-> 适用范围：Windows + Docker Desktop + 宿主机 Go 服务
-> 事实来源：当前配置加载、Docker Compose、schema、seed 与 pprof 实现
-> 最后更新：2026-10-11
+> 文档角色：当前V2／GM的启动、维护与故障排查
+> 权威级别：L1
+> 状态：已按维护边界更新
+> 适用范围：本机及隔离测试，不适用于公网生产部署
+> 事实来源：当前配置、启动器、迁移工具和对应CI
+> 最后更新：2026-11-10
 
-## R3 本机新增运行项
+本文是当前运行入口。2026-11-10维护收口后，新安装统一采用`deploy/local.ps1`；原手工schema／seed和固定容器步骤不再作为新安装指南。历史命令与当时成绩保留在Git基线`401247d`及各阶段验收中，不据此改动已有数据。
 
-- V2本机服务可开启 `PVE_ARCHIVE_ENABLED=true`、`PVE_ARCHIVE_RETENTION_DAYS`、`PVE_ARCHIVE_BATCH_SIZE`；归档只处理已终态、已结算、无活动占用和无待处理操作的Run，默认关闭。
-- 指标服务通过 `PVE_METRICS_ENABLED=true`、loopback `PVE_METRICS_ADDR` 和独立 `PVE_METRICS_TOKEN` 开启；该token不等于测试事件token，Prometheus只通过Bearer读取。不要绑定公网地址。
-- `WS_MAX_CONNECTIONS` 和 `WS_MAX_CONNECTIONS_PER_IP` 限制连接资源；替换同一玩家连接仍然允许，超额连接返回42972。
-- 本机监控使用 `deploy/docker-compose.monitoring.yml`、`deploy/monitoring/prometheus.example.yml` 和Grafana provisioning文件；Prometheus/Grafana只绑定127.0.0.1，发布前必须替换临时密码和token。
-- 四个Unity Player本机验收使用 `deploy/verify-r3-unity.ps1`，它要求隔离V2配置、临时密码和独立事件token；脚本不会向项目文件写密码。
-- Dockerfile和CI锁定Go 1.27.1；镜像构建已有本机与远程CI证据。Docker Hub访问需要代理时，仅按当前网络配置受控代理，不把本机地址写进仓库。
+## 1. 运行方式
 
-## 1. 运行模型
+本项目面向本机与隔离测试，不提供公网生产部署。Go模块最低1.26.0；CI、Docker及建议本机构建工具链为1.27.3。此安全升级已获明确授权，原工具链的测试成绩不迁给新版本。
 
-MySQL/Redis 由 Docker Compose 运行；Go 可在宿主机或仓库提供的非 root Docker 镜像中启动。默认 V2 首次启动先执行 `v2_migrate -stage r4` 完成 day37—40；正常停写前由 operator 排空并确认 closed。没有反向代理、TLS、Kubernetes 或自动生产部署，完整入口见 [PVE运行指南](pve-release-guide.md)。
+- `Isolated`：独立身份、随机凭据和命名卷；HTTP18080、MySQL33306、Redis36379均绑定loopback。
+- `Existing`：明确配置现有本机安装，只允许Check和Server；不初始化、不生成凭据、不管理其容器或卷。
+- R5：使用单独项目、合成恢复副本与报表库，按角色连接依赖，不接入主发奖链路。
 
-依赖顺序：
+MySQL保存账号、事实、权限、奖励和账本；Redis是可重建投影。`/health`证明进程活性；`/ready`在共同预算内检查依赖及进程生命周期，不代表维护状态允许新匹配。
 
-```text
-Docker Desktop
--> MySQL 与 Redis 容器
--> schema/seed
--> Go 服务
--> HTTP/WebSocket 验证
-```
+## 2. 新安装与停止
 
-## 2. 前置条件
-
-- Go 版本满足 `backend/go.mod`。
-- Docker Desktop 与 Docker Engine 已启动。
-- 本机 `3306`、`6379` 和应用端口未被其他进程占用。
-- 在共享环境运行前，已覆盖所有本地开发密码和 `JWT_SECRET`。
-
-检查：
+准备PowerShell7.4、Docker Linux引擎和Go1.27.3，核对：
 
 ```powershell
 go version
 docker version
 docker compose version
-Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-  Where-Object LocalPort -in 3306,6379,8080,6060
 ```
 
-## 3. 环境变量
+从仓库根目录顺序执行：
 
-| 变量 | 当前默认/用途 | 共享环境要求 |
+```powershell
+./deploy/local.ps1 -Action Prepare
+./deploy/local.ps1 -Action ServicesStart
+./deploy/local.ps1 -Action Initialize
+./deploy/local.ps1 -Action Check
+./deploy/local.ps1 -Action CreateAdmin -Username demo_operator -PasswordFile '<外部受限单行密码文件>'
+./deploy/local.ps1 -Action Server
+```
+
+Prepare只创建仓库外受限状态，不启动容器。Initialize仅对该入口拥有的新空库应用原schema与day37—40，失败状态保留，不自动重试；不导入固定管理员seed。CreateAdmin拒绝覆盖已有账号。
+
+Server在前台运行，确认`http://127.0.0.1:18080/ready`，按Ctrl+C结束该服务。停止依赖：
+
+```powershell
+./deploy/local.ps1 -Action ServicesStop
+```
+
+该动作只停止本入口验证为自有的资源，保留卷。日常重启不使用`down -v`、prune或删秘密文件。端口冲突、归属不明、部分凭据和密码不匹配均停止核查，不自动换端口、杀用户程序、接管卷或重建数据。详细流程、外部状态位置和前端5173／5174代理见[本机启动指南](pve-release-guide.md)。
+
+## 3. 显式配置与安全边界
+
+| 变量 | 裸服务行为 | 启动器行为 |
 | --- | --- | --- |
-| `APP_PORT` | `8080`，HTTP 与 WebSocket | 选择明确端口 |
-| `APP_HOST` | 空值，沿用所有网卡 | 本机验收设 `127.0.0.1`；容器内按端口映射需要选择 |
-| `DB_MAX_OPEN_CONNS/DB_MAX_IDLE_CONNS` | `20/10` | 玩法服务open至少2（一条所有权、一条业务）；idle允许0，不能超过open |
-| `REDIS_POOL_SIZE/REDIS_MAX_ACTIVE_CONNS` | `10/20` | base池与硬连接上限；不能只设PoolSize而允许额外连接无限扩张 |
-| `REDIS_POOL_TIMEOUT_MS` | `1000` | 池耗尽等待预算；必须为正，故障请求不无限等空闲连接 |
-| `DB_HOST` / `DB_PORT` | `localhost:3306` | 指向受控 MySQL |
-| `DB_USER` / `DB_PASSWORD` / `DB_NAME` | 本地开发连接 | 必须通过 Secret 覆盖 |
-| `REDIS_ADDR` / `REDIS_PASSWORD` / `REDIS_DB` | `localhost:6379` / 空 / 0 | 按环境隔离并鉴权 |
-| `JWT_SECRET` | 代码含开发回退值 | 任何共享/公网环境必须使用强随机 Secret |
-| `PPROF_ENABLED` | `false` | 默认保持关闭 |
-| `PPROF_ADDR` | `127.0.0.1:6060` | 不得绑定公网地址 |
+| APP_HOST／APP_PORT | 默认127.0.0.1／8080，HOST须有效IP | Isolated固定127.0.0.1／18080；Existing要求明确本机地址 |
+| DB_HOST／DB_PORT／DB_USER／DB_NAME | 默认本机历史名称，DB_PASSWORD为空则启动前拒绝 | Isolated独立身份；Existing读取显式配置和原外部密码文件 |
+| JWT_SECRET | 无开发回退；32—4096字节，独立于存储密码 | Isolated生成；Existing必须引用原受限文件 |
+| REDIS_ADDR／REDIS_DB | 默认localhost:6379／0；旧无密码环境仍可显式配置 | Isolated独立密码和端口；Existing明确引用或声明无密码 |
+| DB_MAX_OPEN_CONNS／DB_MAX_IDLE_CONNS | 默认20／10，检查连接预算 | 不绕过服务校验 |
+| REDIS_POOL_SIZE／REDIS_MAX_ACTIVE_CONNS／REDIS_POOL_TIMEOUT_MS | 默认10／20／1000，有界连接与等待 | 不绕过服务校验 |
+| PPROF_ENABLED／PVE_TEST_EVENTS_ENABLED／PVE_METRICS_ENABLED／PVE_ARCHIVE_ENABLED | 默认关闭，诊断和服务凭据独立 | 启动器清除继承的启用标记，避免无意开放 |
+| GOTOOLCHAIN | 由直接调用环境决定 | 固定local，旧Go不会自动下载，需先安装建议修复版本 |
 
-不要打印完整环境、DSN、Authorization 头或 token。`docker compose config` 可能展开环境值，不要将输出粘贴到公开日志。
+不要打印环境全集、DSN、Authorization、JWT、SQL数据正文或WebSocket query。`docker compose config`可能展开秘密，不将输出放入公开日志。容器内部确需外部路由时显式声明`APP_HOST=0.0.0.0`，不能以此将宿主端口暴露公网。
 
-## 4. 启动依赖
+Existing配置见[示例](../deploy/local-existing.example.json)，配置和秘密应放仓库外；Check仅查询结构、迁移账本checksum和RedisPING。Server会执行Recover／Worker与正常业务写入，同库其他服务必须先停，不应把Server当只读检查。
 
-```powershell
-cd .\deploy
-docker compose config
-docker compose up -d
-docker compose ps
-```
+既有数据库的手工R4升级不属于Existing动作。先按[备份与恢复](backup-and-recovery.md)在新恢复库验证备份，再依据[R4维护与切换](design/v2-r4-implementation.md)排空、停止同库写服务。由操作者在专用终端显式注入原目标的DB配置和原密码，设置`V2_MIGRATION_CONFIRM=I_UNDERSTAND_V2_MIGRATION`，在backend目录运行`go run -p 1 ./cmd/tools/v2_migrate -stage r4`。检查退出码；dirty、checksum或结构不一致须停止核查，不手改账本或重复执行SQL。迁移后用原Existing配置重新Check、核对事实和账本，再恢复服务。该流程不授权覆盖原库、导入固定seed或把Dungeon Contract数据库当目标。
 
-预期容器：
+## 4. 排障、诊断与恢复
 
-```text
-game_realtime_mysql
-game_realtime_redis
-```
+- 内存：重任务串行，Windows依赖启动准入2688MiB提交／1536MiB物理，Go准入1792MiB／1024MiB。自有Go进程维持1GiB／512MiB保留线；Compose只做启动准入，不宣称容器持续受保护。
+- 端口：先查占用者。保持已选择的安装和端口，不为通过测试改用户系统服务。
+- 认证：核对同一安装的原凭据和JWT身份，不输出密钥或刷新已存在密码。玩家JWT与管理员JWT不能互换。
+- 迁移：dirty、checksum不符、列或索引缺失须停写核查，禁止修改已应用SQL或靠删账本重跑。Check不能代替迁移修复工具。
+- WS：确认玩家会话、V2协议、来源和请求身份；通知丢失用查询恢复，不能据连接成功承诺恰好一次通知。
+- 依赖：检查自有容器健康和仅本机连接；日志保存在仓库外，分享前脱敏。不要重新导入固定seed排除认证故障。
+- 恢复：先做仓库外备份并在新库验证；按[备份恢复规则](backup-and-recovery.md)使用隔离目标，不能把旧备份覆盖已产生新奖励的活动库。
 
-查看日志：
+pprof、独立metrics、测试事件只用于有明确需要的本机诊断，使用各自独立凭据及预算，诊断后关闭。启用这些高级配置需要先停止统一入口服务，再在专用终端直接显式配置完整服务环境；统一本机入口不会从调用方继承开启标记。pprof保持loopback，结束后恢复原环境。
 
-```powershell
-docker compose logs --tail 100 mysql
-docker compose logs --tail 100 redis
-```
+监控模板见[Compose](../deploy/docker-compose.monitoring.yml)、[Prometheus配置](../deploy/monitoring/prometheus.example.yml)、[告警规则](../deploy/monitoring/alerts.yml)和[仪表板](../deploy/monitoring/dashboard.json)。这些只是本机演练模板，使用前核对独立凭据与绑定；不能冒作共享告警平台或公网监控，秘密不进入仓库和公开日志。
 
-MySQL 首次初始化可能比 Redis 慢；出现连接失败时先等待 MySQL ready，再启动 Go 服务。
+## 5. R5、维护与发布
 
-## 5. 初始化数据库
+独立RPC／消息实验的准备、角色配置、端口、inspect、单条人工重投、审计未知结果和数据重建见[R5说明](../experiments/r5-m6/README.md)。主服务不配置gRPC／RabbitMQ也能完成结算；报告失败不授权修改主资产。实验`-ResetData`只适用于明确的合成环境，不能清理原业务库来排错。
 
-在仓库根目录执行全量 schema：
+发布保留固定R3源码SHA的实际二进制回退演练、主／R5真实存储race、两前端、镜像、公开文件及source/symbol依赖扫描。扫描区分可达调用链与仅模块／包级公告；残余公告必须记录，不把“0个可达调用链”说成“零漏洞”。备份、DDL、回滚和运维必须有明确目标；代码回退不意味着数据库可倒退覆盖。
 
-```powershell
-Get-Content .\backend\internal\database\schema.sql -Raw |
-  docker exec -i game_realtime_mysql sh -lc 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"'
-```
-
-本地管理员 seed：
-
-```powershell
-Get-Content .\backend\internal\database\seed.sql -Raw |
-  docker exec -i game_realtime_mysql sh -lc 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"'
-```
-
-这些命令可能显示 MySQL 的命令行密码警告；凭据来自容器开发环境，仍不要复制完整命令输出到公开材料。任何共享环境都必须先替换 seed 管理员凭据。
-
-验证表：
-
-```powershell
-docker exec game_realtime_mysql sh -lc `
-  'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" -e "SHOW TABLES;"'
-```
-
-应看到 7 张表：`players`、`admins`、`admin_operation_logs`、`mission_records`、`reward_records`、`asset_ledger`、`player_assets`。
-
-`migrations/day31_settlement_assets.sql` 只用于明确处于 Day30 结构的旧本地库；新环境只执行当前 `schema.sql`，不要同时盲目重复执行增量 migration。
-
-## 6. 启动与检查 Go 服务
-
-```powershell
-cd .\backend
-go run .\cmd\server
-```
-
-正常日志应包含数据库、Redis 连接成功和监听端口，不应输出密码、JWT 或 WebSocket raw query。
-
-另开终端检查：
-
-```powershell
-Invoke-RestMethod http://localhost:8080/health
-```
-
-`/health` 只检查 HTTP 活性；`GET /ready` 在共同一秒预算内检查 MySQL/Redis，且进程生命周期有效才返回 200，否则返回 503/code=50301。探针不返回密码、连接地址或原始依赖错误，不代表新匹配准入已开启；维护/排空使用原有控制面状态。服务启动先完成事实恢复再监听，因此启动期间不会提前就绪。
-
-健康检查只证明 HTTP 进程响应。再执行登录、在线或 GM 摘要，才能覆盖 MySQL/Redis 业务链路。
-
-## 7. pprof
-
-只在本机诊断时临时启用：
-
-```powershell
-$env:PPROF_ENABLED = "true"
-$env:PPROF_ADDR = "127.0.0.1:6060"
-go run .\cmd\server
-```
-
-检查：
-
-```powershell
-Invoke-WebRequest http://127.0.0.1:6060/debug/pprof/
-```
-
-结束后清理当前 PowerShell 环境变量：
-
-```powershell
-Remove-Item Env:PPROF_ENABLED -ErrorAction SilentlyContinue
-Remove-Item Env:PPROF_ADDR -ErrorAction SilentlyContinue
-```
-
-profile、goroutine dump 和运行日志保存在仓库外，不提交 Git。pprof 不得暴露公网。
-
-## 8. 停止与重启
-
-Go 服务：在运行终端按 `Ctrl+C`。服务执行信号驱动的优雅关闭，先停止接收新请求并关闭 Worker/WS；仍需等待终止日志，不能把进程强杀当作正常停止。
-
-停止依赖但保留容器和数据：
-
-```powershell
-cd .\deploy
-docker compose stop
-```
-
-重新启动：
-
-```powershell
-docker compose start
-```
-
-停止并删除容器/网络但保留命名 volume：
-
-```powershell
-docker compose down
-```
-
-不要在日常重启时使用 `down -v`，它会删除数据库和 Redis volume。删除前必须先备份并明确确认目标。
-
-## 9. 常见故障
-
-### 端口被占用
-
-```powershell
-Get-NetTCPConnection -State Listen -LocalPort 3306,6379,8080,6060 -ErrorAction SilentlyContinue |
-  Select-Object LocalAddress,LocalPort,OwningProcess
-```
-
-再用 `Get-Process -Id <pid>` 识别进程。MySQL 本机服务与 Docker MySQL 不应同时占用 `3306`；可以停用不参与项目的本机服务，或明确改变映射和 `DB_PORT`。
-
-### MySQL 未就绪或 schema 缺失
-
-- `docker compose ps` 查看状态。
-- `docker compose logs --tail 100 mysql` 查看初始化错误。
-- 使用 `SHOW TABLES` 确认 7 张表。
-- 若出现字段/索引冲突，先确认数据库当前版本，不要反复执行 migration。
-
-### Redis 未启动
-
-```powershell
-docker exec game_realtime_redis redis-cli PING
-```
-
-预期 `PONG`。服务启动阶段 Redis ping 失败会直接退出。
-
-### JWT 配置错误
-
-症状：刚登录获得的 token 在另一个进程持续返回 invalid token。确认签发和校验服务使用相同 `JWT_SECRET`，且没有在终端间使用不同环境变量。不要在日志中打印 Secret 或 token。
-
-### WebSocket 连接失败
-
-- 确认使用玩家 token，不是管理员 token。
-- URL 必须是 `ws://<host>:<port>/ws?token=...`。
-- 检查 token 是否过期、应用端口是否一致。
-- AccessLog 只应显示 `path=/ws`；公开截图前再次检查无 query/token。
-- 非文本、超过 4096 字节或 70 秒未 pong 会导致错误/断开。
-
-### 排行榜与 MySQL 不一致
-
-MySQL 结算成功但 Redis 同步失败时，资产仍然有效。使用同一幂等结算请求重试可再次触发排行榜同步；当前没有自动重建命令，严禁手工修改资产表来“修榜”。
-
-## 10. 本地/测试发布演练
-
-当前发布流程仅是演练：
-
-1. 记录待发布 commit、Go/Docker 版本和环境变量名称，不记录 Secret 值。
-2. 执行 `gofmt -d`、`go test ./...`、`go vet ./...`；按风险执行 Linux race。
-3. 备份 MySQL并记录校验值。
-4. 在测试环境执行 schema/migration，再启动 Go 服务。
-5. 运行健康、登录、WebSocket、结算、排行和 GM 冒烟。
-6. 失败时停止新进程，恢复上一已知代码版本；数据库变更按已验证恢复方案处理，不能只回退代码。
-7. 记录结果、问题、恢复耗时和后续动作。
-
-这不构成正式 CI/CD、生产发布或线上值班经验。
-
-## 11. 当前不具备
-
-- 自动部署流水线及生产镜像仓库；已有本机构建镜像与GitHub Actions测试流水线。
-- systemd/Windows Service 守护、Kubernetes probes、自动扩缩容。
-- TLS、域名、反向代理、可信代理配置和公网安全基线。
-- 共享环境Prometheus/Grafana、外部告警通知、OpenTelemetry和集中日志；已有本机指标采集与告警规则。
-- 蓝绿/金丝雀、自动回滚、HA MySQL/Redis 或跨区域灾备。
-
-备份与恢复步骤见 [备份与恢复](backup-and-recovery.md)，安全发布前置条件见 [安全设计](security-design.md)。
-
-## 12. R1 V2 本地迁移与资源配置
-
-V2启动前在明确目标库执行 `go run ./cmd/tools/v2_migrate -stage r4`（backend目录），需要 `DB_*` 与 `V2_MIGRATION_CONFIRM=I_UNDERSTAND_V2_MIGRATION`。工具与玩法服务共享数据库排他锁，运行中的服务会阻止迁移。已有dirty/错误checksum/不完整schema不得直接再跑SQL；先按备份恢复说明处理。day40增加持久化维护准入和幂等控制；默认模式为v2，旧模式只作为显式回归。
-
-R2 day38 已在本机开发库完成备份恢复副本验证后执行，`day37_v2_pve_foundation` 与 `day38_v2_product_model` 均为 applied；R4 day40 已在恢复副本和本机开发库验证并应用。后续环境仍需独立备份恢复副本和停写窗口；执行 `go run ./cmd/tools/v2_migrate -stage r4` 会按顺序重复校验day37—40。R2/R4新表不修改legacy资产/历史，失败按迁移账本处理。
-
-新增配置：`HTTP_MAX_BODY_BYTES=1048576`、`AUTH_RATE_LIMIT_PER_MINUTE=20`、`WS_RATE_LIMIT_PER_MINUTE=30`、`WS_COMMAND_RATE_LIMIT_PER_MINUTE=120`、`PVE_MAX_PROPOSAL_ROUNDS=8`，V2启动要求正值。Gin拒绝默认信任转发头；若未来加反向代理，必须显式配置受信代理。operator修复入口无需启用内部事件监听，普通gm只读；详见OpenAPI和 [维护与回退实施](design/v2-r4-implementation.md)。
-
-## 13. R5 独立实验运行
-
-先执行 `experiments/r5-m6/deploy/verify.ps1`，默认用仓库外 D 盘证据和固定 `gm-r5-verify` 隔离项目，结束清理实验进程、容器、卷和临时凭据。需要手动学习则加 `-KeepEnvironment`，再对输出目录运行 `deploy/start.ps1/stop.ps1 -EnvironmentDirectory <目录>`；`-ResetData` 只删除本实验数据。端口只绑定本机，原开发数据和主服务玩法模式不修改。
-
-完整初学者步骤、具体端口、日志/指标、重建和 needs_repair 排障见 [独立实验说明](../experiments/r5-m6/README.md)。主服务不必配置 gRPC 或 RabbitMQ；停止整个实验即可回退。CI新增独立契约/单元检查，远程执行须以实际 run 为准，不将本机 PASS 称为远程 CI。
-
-主Worker遇到无效通知会隔离到outbox的needs_repair，GM通知记录仅显示元数据，不返回私聊正文；排空ready-to-stop和needs_repair指标包含该行。修复须先核对来源/原操作并恢复有效payload，再由受控运维恢复pending；禁止为“清零指标”直接删除未知事实。当前没有公开写通知接口。R5主reports队列补DLX参数后，之前保留的实验环境需用stop -ResetData清理再重新验收初始化；不覆盖开发数据库。
+本仓库不提供自动生产部署、Kubernetes调度、自动扩缩容、TLS公网入口、蓝绿／金丝雀、跨区灾备或集群高可用。本轮实际提交、CI、历史差异与有限维护分工见[维护记录](maintenance/README.md)和[本轮复核](maintenance/refresh-20261110.md)。

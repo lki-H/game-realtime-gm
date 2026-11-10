@@ -70,7 +70,7 @@ type PVEConfig struct {
 func Load() Config {
 	mode := getEnv("GAMEPLAY_MODE", "v2")
 	return Config{
-		AppHost:      getEnv("APP_HOST", ""),
+		AppHost:      getEnv("APP_HOST", "127.0.0.1"),
 		AppPort:      getEnv("APP_PORT", "8080"),
 		GameplayMode: mode,
 		Pprof: PprofConfig{
@@ -84,7 +84,7 @@ func Load() Config {
 			Host:         getEnv("DB_HOST", "localhost"),
 			Port:         getEnv("DB_PORT", "3306"),
 			User:         getEnv("DB_USER", "game"),
-			Password:     getEnv("DB_PASSWORD", "game123456"),
+			Password:     getEnv("DB_PASSWORD", ""),
 			Name:         getEnv("DB_NAME", "game_realtime"),
 		},
 		Redis: RedisConfig{
@@ -95,7 +95,7 @@ func Load() Config {
 			Password:       getEnv("REDIS_PASSWORD", ""),
 			DB:             getEnvInt("REDIS_DB", 0),
 		},
-		JWTSecret: getEnv("JWT_SECRET", "game-realtime-dev-secret"),
+		JWTSecret: getEnv("JWT_SECRET", ""),
 		PVE: PVEConfig{
 			RegroupTTLSeconds:    getEnvInt("PVE_REGROUP_TTL_SECONDS", 120),
 			MaxProposalRounds:    getEnvInt("PVE_MAX_PROPOSAL_ROUNDS", 8),

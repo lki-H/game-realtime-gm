@@ -9,6 +9,8 @@
 
 ## 快速了解
 
+- [当前有限维护与共享修复](maintenance/README.md)
+- [后继可玩Dungeon Contract](https://github.com/lki-H/dungeon-contract)
 - [V2 PVE发布与运行指南](pve-release-guide.md)
 - [R3发布验收](testing/r3-release-acceptance.md)
 - [R4退役与回滚计划](design/v2-r4-retirement-and-rollback-plan.md)

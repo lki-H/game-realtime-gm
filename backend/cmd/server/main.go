@@ -26,6 +26,9 @@ import (
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	cfg := config.Load()
+	if err := config.ValidateService(cfg); err != nil {
+		log.Fatal("invalid service configuration: ", err)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if cfg.GameplayMode != "legacy" && cfg.GameplayMode != "v2" {

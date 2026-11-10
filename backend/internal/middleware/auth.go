@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"net/http"
-	"strings"
 
 	tokenauth "game-realtime-gm/backend/internal/auth"
 
@@ -149,9 +148,8 @@ func bearerTokenFromHeader(c *gin.Context, missingCode int, invalidCode int) (st
 		return "", false
 	}
 
-	tokenString := strings.TrimSpace(strings.TrimPrefix(header, "Bearer"))
-	tokenString = strings.TrimSpace(tokenString)
-	if tokenString == "" || tokenString == header {
+	tokenString, err := tokenauth.BearerToken(header)
+	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"code":    invalidCode,
 			"message": "invalid authorization header",

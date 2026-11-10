@@ -1,0 +1,57 @@
+services:
+  mysql:
+    image: mysql:8.4.11
+    labels:
+      io.game-realtime-gm.local-owner: ${GM_LOCAL_OWNER:?prepare required}
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql-root-password
+      MYSQL_DATABASE: game_realtime_local
+      MYSQL_USER: gm_local
+      MYSQL_PASSWORD_FILE: /run/secrets/db-password
+    command: ["--default-time-zone=+00:00", "--innodb-buffer-pool-size=134217728"]
+    ports:
+      - "127.0.0.1:${GM_LOCAL_MYSQL_PORT:?prepare required}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    secrets: [mysql-root-password, db-password]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$(cat /run/secrets/db-password) mysql -h 127.0.0.1 -u gm_local -D game_realtime_local -e 'SELECT 1' >/dev/null"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+  redis:
+    image: redis:7
+    labels:
+      io.game-realtime-gm.local-owner: ${GM_LOCAL_OWNER:?prepare required}
+    # Compose's local secret mounts preserve host file permissions. Copy the
+    # private config before the official entrypoint drops to the redis user;
+    # never relax the host credential files to world-readable permissions.
+    entrypoint: ["sh", "-ec", "cp /run/secrets/redis-config /run/gm-local-redis.conf; chown redis:redis /run/gm-local-redis.conf; chmod 600 /run/gm-local-redis.conf; exec /usr/local/bin/docker-entrypoint.sh redis-server /run/gm-local-redis.conf"]
+    ports:
+      - "127.0.0.1:${GM_LOCAL_REDIS_PORT:?prepare required}:6379"
+    volumes:
+      - redis-data:/data
+    secrets: [redis-password, redis-config]
+    mem_limit: 96m
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$(cat /run/secrets/redis-password) redis-cli -h 127.0.0.1 -p 6379 ping | grep -qx PONG"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+secrets:
+  mysql-root-password:
+    file: ${GM_LOCAL_PRIVATE:?prepare required}/mysql-root-password.txt
+  db-password:
+    file: ${GM_LOCAL_PRIVATE:?prepare required}/db-password.txt
+  redis-password:
+    file: ${GM_LOCAL_PRIVATE:?prepare required}/redis-password.txt
+  redis-config:
+    file: ${GM_LOCAL_PRIVATE:?prepare required}/redis.conf
+volumes:
+  mysql-data:
+    labels:
+      io.game-realtime-gm.local-owner: ${GM_LOCAL_OWNER:?prepare required}
+  redis-data:
+    labels:
+      io.game-realtime-gm.local-owner: ${GM_LOCAL_OWNER:?prepare required}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"flag"
 	"log/slog"
@@ -20,7 +21,7 @@ func main() {
 	mode := flag.String("mode", "rpc", "rpc, bridge, publisher or consumer")
 	configuration := flag.String("config", "", "local private configuration file")
 	flag.Parse()
-	cfg, err := experiment.LoadConfig(*configuration)
+	cfg, err := experiment.LoadRoleConfig(*configuration, *mode)
 	if err != nil {
 		fail("configuration_rejected")
 	}
@@ -29,19 +30,24 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	source, err := experiment.OpenDatabase(cfg.Source)
-	if err != nil {
-		fail("source_configuration_rejected")
+	var source, projection *sql.DB
+	if cfg.Source != nil {
+		source, err = experiment.OpenDatabase(*cfg.Source)
+		if err != nil {
+			fail("source_configuration_rejected")
+		}
+		defer source.Close()
 	}
-	defer source.Close()
-	projection, err := experiment.OpenDatabase(cfg.Projection)
-	if err != nil {
-		fail("projection_configuration_rejected")
+	if cfg.Projection != nil {
+		projection, err = experiment.OpenDatabase(*cfg.Projection)
+		if err != nil {
+			fail("projection_configuration_rejected")
+		}
+		defer projection.Close()
 	}
-	defer projection.Close()
 	metrics := &experiment.Metrics{}
 	metrics.Add("starts", 1)
-	metricsServer := experiment.MetricsServer(cfg.Metrics[*mode], cfg.Identities, metrics)
+	metricsServer := experiment.MetricsServer(cfg.MetricsAddress, cfg.Identities, metrics)
 	metricListener, err := net.Listen("tcp", metricsServer.Addr)
 	if err != nil {
 		fail("metrics_listener_failed")
@@ -60,7 +66,7 @@ func main() {
 		if err != nil {
 			fail("rpc_listener_failed")
 		}
-		server := experiment.RPCServer(cfg, experiment.Source{DB: source}, metrics)
+		server := experiment.RPCServer(experiment.Config{Identities: cfg.Identities}, experiment.Source{DB: source}, metrics)
 		go func() { runtimeErrors <- server.Serve(listener) }()
 		defer func() {
 			done := make(chan struct{})
@@ -85,7 +91,7 @@ func main() {
 					if *mode == "consumer" {
 						brokerConfig = cfg.Consumer
 					}
-					broker, connectErr := experiment.OpenBroker(brokerConfig)
+					broker, connectErr := experiment.OpenBroker(*brokerConfig)
 					if connectErr != nil {
 						workErr = connectErr
 					} else {

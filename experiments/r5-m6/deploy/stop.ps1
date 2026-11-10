@@ -22,7 +22,7 @@ if ($ResetData) { $composeArguments += '--volumes' }
 & docker @composeArguments
 if ($LASTEXITCODE -ne 0) { throw 'R5 shutdown failed.' }
 if ($ResetData) {
-    foreach ($name in @('compose.env','admin.json','runtime.json','clients.json')) {
+    foreach ($name in @('compose.env','admin.json','runtime.json','clients.json','rpc.json','bridge.json','publisher.json','consumer.json','ops.json','query.json')) {
         $path = Join-Path $directory $name
         if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path }
     }

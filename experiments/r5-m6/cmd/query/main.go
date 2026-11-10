@@ -22,7 +22,7 @@ func main() {
 	runID := flag.String("run", "", "optional settled run")
 	player := flag.Int64("player", 0, "scoped player for run query")
 	flag.Parse()
-	cfg, err := experiment.LoadConfig(*config)
+	cfg, err := experiment.LoadQueryConfig(*config)
 	if err != nil {
 		fail("configuration_rejected")
 	}
