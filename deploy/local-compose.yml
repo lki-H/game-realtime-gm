@@ -24,7 +24,10 @@ services:
     image: redis:7
     labels:
       io.game-realtime-gm.local-owner: ${GM_LOCAL_OWNER:?prepare required}
-    command: ["redis-server", "/run/secrets/redis.conf"]
+    # Compose's local secret mounts preserve host file permissions. Copy the
+    # private config before the official entrypoint drops to the redis user;
+    # never relax the host credential files to world-readable permissions.
+    entrypoint: ["sh", "-ec", "cp /run/secrets/redis.conf /run/gm-local-redis.conf; chown redis:redis /run/gm-local-redis.conf; chmod 600 /run/gm-local-redis.conf; exec /usr/local/bin/docker-entrypoint.sh redis-server /run/gm-local-redis.conf"]
     ports:
       - "127.0.0.1:${GM_LOCAL_REDIS_PORT:?prepare required}:6379"
     volumes:

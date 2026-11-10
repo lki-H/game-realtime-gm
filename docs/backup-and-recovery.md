@@ -9,6 +9,8 @@
 
 ## 1. 目标与边界
 
+2026-11维护补充：本页旧容器命名仅适用于明确配置的历史环境，不是新`local.ps1`安装的操作入口。恢复必须使用独立容器和新库，禁止把下述示意指向唯一开发库、`game_realtime`或Dungeon Contract存储；先核对容器身份、卷和外部备份。新入口不提供自动恢复，不为执行旧示例生成或替换原密码。
+
 ### R3迁移演练补充
 
 V2编号迁移使用schema_migrations账本与checksum，迁移前必须生成仓库外备份并恢复到新数据库验证。`v2_backup`只恢复到新建`game_realtime_v2_*_restore`，拒绝覆盖已有库/文件；`v2_migrate -stage r4`检查day37—40并拒绝dirty/校验不一致。本机开发库day40已有恢复副本/原库重复应用和旧事实摘要核对，见 [R4版本基线](testing/r4-release-acceptance.md)。
@@ -42,11 +44,11 @@ $backup = Join-Path $backupDir "game_realtime-$stamp.sql"
 
 ```powershell
 docker exec game_realtime_mysql sh -lc `
-  'mysqldump -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" --single-transaction --routines --triggers "$MYSQL_DATABASE"' |
+  'MYSQL_PWD="$MYSQL_PASSWORD" mysqldump -u"$MYSQL_USER" --single-transaction --routines --triggers "$MYSQL_DATABASE"' |
   Set-Content -LiteralPath $backup -Encoding utf8
 ```
 
-`--single-transaction` 适用于当前 InnoDB 表，减少导出期间锁表影响。MySQL 可能输出命令行密码警告；不要记录真实凭据或公开终端全文。
+`--single-transaction` 适用于当前 InnoDB 表，减少导出期间锁表影响。凭据仅从容器环境读取，不放在客户端命令参数中；不要记录真实凭据或公开终端全文。导出前后均须检查原生命令退出码，PowerShell管道写出文件不等于导出成功。
 
 校验文件：
 
@@ -60,18 +62,20 @@ Select-String -LiteralPath $backup -Pattern "CREATE TABLE.*players","CREATE TABL
 
 ## 4. MySQL 恢复演练
 
-恢复应优先在隔离的新测试数据库/新 volume 进行，不直接覆盖唯一工作副本。
+恢复必须在隔离的新测试容器／新volume及新数据库进行，不覆盖已有工作副本。
 
 1. 记录备份 SHA256、源代码版本和 MySQL 版本。
 2. 启动隔离 MySQL 或创建明确的测试数据库。
-3. 导入 dump：
+3. 在明确支持历史环境凭据的独立恢复容器中，使用拒绝覆盖的工具导入；下面的容器名须先指向你新建的隔离恢复实例：
 
 ```powershell
-Get-Content -LiteralPath $backup -Raw |
-  docker exec -i game_realtime_mysql sh -lc 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"'
+$env:V2_BACKUP_CONFIRM='I_UNDERSTAND_V2_BACKUP'
+go run ./cmd/tools/v2_backup -action restore -container isolated_restore_mysql -database game_realtime_v2_review_restore -file $backup
 ```
 
-4. 验证表、行数和关键一致性：
+该命令在`backend`目录执行，要求新目标库不存在；不接受把原库作为恢复目标。新Isolated安装使用文件式秘密，与此历史容器工具不直接通用，不应为兼容示例放宽秘密权限。
+
+4. 在独立恢复目标验证表、行数和关键一致性：
 
 ```sql
 SHOW TABLES;

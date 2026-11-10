@@ -1,0 +1,86 @@
+{
+  "source_commit": "401247d03832cb10775f166f2deeb71310acc150",
+  "scope": "Applied SQL bytes and unchanged v1 generated wire contract",
+  "files": [
+    {
+      "path": "backend/internal/database/migrations/day31_settlement_assets.sql",
+      "bytes": 2301,
+      "sha256": "bf6de46499c3b966a7f30ee0fc3c5f9da0878bbe5d44b42fefc7e058e51fe8e7"
+    },
+    {
+      "path": "backend/internal/database/migrations/day37_v2_pve_foundation.sql",
+      "bytes": 18127,
+      "sha256": "f5445541c250e417217bed2a87bbd5a25b25702ab5b92d857afa7676d963d8bd"
+    },
+    {
+      "path": "backend/internal/database/migrations/day38_v2_product_model.sql",
+      "bytes": 3421,
+      "sha256": "be1db32047a77d70199aa67ef698148ac74be76aac6e3e2c6afa68e1f281b61d"
+    },
+    {
+      "path": "backend/internal/database/migrations/day39_v2_engineering.sql",
+      "bytes": 409,
+      "sha256": "90832beb3615608b13efce331622f33bf75169eecc50b72e435f662946439a71"
+    },
+    {
+      "path": "backend/internal/database/migrations/day40_v2_retirement.sql",
+      "bytes": 723,
+      "sha256": "714cef12c0c49184b4b3a0a2c3079bc353eb64d307a0262eb1c695237f9923ab"
+    },
+    {
+      "path": "backend/internal/database/schema.sql",
+      "bytes": 4938,
+      "sha256": "827d82ab4b502d36fd7ddfd62fd0c443ecaa127d150ab04305e086754d977c5d"
+    },
+    {
+      "path": "backend/internal/database/seed.sql",
+      "bytes": 391,
+      "sha256": "889df799ce5b5601cb0d82920fa429cc07f5549645a20d0e5ae89b1eaae2f619"
+    },
+    {
+      "path": "deploy/v2-test-init.sql",
+      "bytes": 129,
+      "sha256": "1230dc2223643d3712c52b332050c4e5f01cab941ae0a938727893ee9d51f8ec"
+    },
+    {
+      "path": "experiments/r5-m6/gen/csharp/Reporting.cs",
+      "bytes": 58191,
+      "sha256": "239d99f4040941169d79e4ed02872dcf2e7c0e5f3d3c9a3545d359c6de5d6e2b"
+    },
+    {
+      "path": "experiments/r5-m6/gen/reporting/v1/reporting.pb.go",
+      "bytes": 14810,
+      "sha256": "88bc8715f54d629bb231ae5b651ff8a67fe4dc3a4d1a110403cfc33dfdd46149"
+    },
+    {
+      "path": "experiments/r5-m6/gen/reporting/v1/reporting_grpc.pb.go",
+      "bytes": 6125,
+      "sha256": "788ebd5f070bb77ad9572615c91f276f898fbea8e0b496881a18bbca78d0723d"
+    },
+    {
+      "path": "experiments/r5-m6/proto/reporting.pb",
+      "bytes": 1057,
+      "sha256": "00f2b34c0eff90faa8287d4ae50fea4614265ef0066923c162c5d1704a163bae"
+    },
+    {
+      "path": "experiments/r5-m6/proto/reporting.proto",
+      "bytes": 979,
+      "sha256": "283b2621ba0ec8dfa2367ccee3608a47a7cdac0c9120a9f3b3ccb9642d151e37"
+    },
+    {
+      "path": "experiments/r5-m6/proto/source.sha256",
+      "bytes": 65,
+      "sha256": "75cb608f6b2e8a1e284122163c3fb78258712cc1d0abbb1a5db69d9ff1af0559"
+    },
+    {
+      "path": "experiments/r5-m6/schema/001_reporting.sql",
+      "bytes": 1204,
+      "sha256": "0762be280cbfd01ba9cc7274edf9c93b4e1197e12caac9884648ee90246901d6"
+    },
+    {
+      "path": "experiments/r5-m6/schema/002_source_views.sql",
+      "bytes": 935,
+      "sha256": "9735516f149c7e88241071fb30e8b40d351f6218503a08af19f4aa0504f0f883"
+    }
+  ]
+}

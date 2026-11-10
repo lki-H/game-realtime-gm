@@ -1,3 +1,7 @@
+# 当前维护补充
+
+2026-11-10：V2仍为schema_version=2，未引入新战斗协议。握手与HTTP共用标准Bearer解析，玩家会话／Origin／资源检查继续有效。客户端消息形状、合法迟到回执、同操作重试与旧socket隔离补齐；客户端查询恢复不等于网络通知恰好一次。入口与验证见[当前维护](maintenance/README.md)。下文legacy和历史数字保持其对应模式。
+
 # WebSocket JSON 协议
 
 > 文档角色：当前 WebSocket 连接与消息唯一契约

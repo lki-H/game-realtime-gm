@@ -2,33 +2,64 @@ name: Verify independent R5
 on:
   push:
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  r5-contracts:
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    outputs:
+      r5: ${{ steps.scope.outputs.r5 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: scope
+        run: python -B deploy/review_checks.py --classify
+  r5-contracts:
+    needs: changes
+    if: needs.changes.outputs.r5 == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: 1.27.1
           cache-dependency-path: experiments/r5-m6/go.sum
-      - name: Tests, race and vet
+      - name: Tests, race, vet and module authenticity
+        shell: bash
         working-directory: experiments/r5-m6
         run: |
-          go test -race ./...
-          go vet ./...
+          set -euo pipefail
+          go test -race -p 1 -count=1 -json ./... | tee "$RUNNER_TEMP/r5-unit-tests.jsonl"
+          python -B ../../deploy/review_checks.py --test-events "$RUNNER_TEMP/r5-unit-tests.jsonl" --kind r5-unit --json "$RUNNER_TEMP/r5-unit-summary.json"
+          go vet -p 1 ./...
           go mod verify
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - name: C sharp contract compilation
+      - name: C sharp shared golden contract
         working-directory: experiments/r5-m6
         run: dotnet run --project gen/csharp/ContractCheck.csproj -c Release --no-launch-profile
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: r5-contract-summary
+          path: |
+            ${{ runner.temp }}/r5-unit-summary.json
+            ${{ runner.temp }}/r5-unit-tests.jsonl
   r5-integration:
+    needs: changes
+    if: needs.changes.outputs.r5 == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -37,5 +68,24 @@ jobs:
           cache-dependency-path: |
             backend/go.sum
             experiments/r5-m6/go.sum
-      - name: Real storage, race and failure isolation
+      - name: Real storage, race, process recovery and failure isolation
         run: bash experiments/r5-m6/deploy/verify-ci.sh
+  gate:
+    if: always()
+    needs: [changes, r5-contracts, r5-integration]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          CHANGE_RESULT: ${{ needs.changes.result }}
+          R5_REQUIRED: ${{ needs.changes.outputs.r5 }}
+          CONTRACT_RESULT: ${{ needs.r5-contracts.result }}
+          INTEGRATION_RESULT: ${{ needs.r5-integration.result }}
+        run: |
+          python - <<'PY'
+          import os
+          assert os.environ['CHANGE_RESULT']=='success'
+          expected='success' if os.environ['R5_REQUIRED']=='true' else 'skipped'
+          assert os.environ['CONTRACT_RESULT']==expected
+          assert os.environ['INTEGRATION_RESULT']==expected
+          print('R5 relevant checks passed; documentation-only skips are explicit.')
+          PY
