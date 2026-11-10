@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "environment": {
+    "APP_HOST": "127.0.0.1",
+    "APP_PORT": "8080",
+    "GAMEPLAY_MODE": "v2",
+    "DB_HOST": "127.0.0.1",
+    "DB_PORT": "3306",
+    "DB_USER": "game",
+    "DB_NAME": "game_realtime",
+    "DB_PASSWORD_FILE": "<absolute external protected password file>",
+    "REDIS_ADDR": "127.0.0.1:6379",
+    "REDIS_DB": "0",
+    "REDIS_PASSWORD_FILE": "",
+    "JWT_SECRET_FILE": "<absolute external protected JWT secret file>"
+  }
+}

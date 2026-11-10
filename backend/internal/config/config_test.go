@@ -4,8 +4,8 @@ import "testing"
 
 func TestAppHostCanRestrictListenerToLoopback(t *testing.T) {
 	t.Setenv("APP_HOST", "")
-	if Load().AppHost != "" {
-		t.Fatal("default listener must retain existing behavior")
+	if Load().AppHost != "127.0.0.1" {
+		t.Fatal("default listener must remain on loopback")
 	}
 	t.Setenv("APP_HOST", "127.0.0.1")
 	if Load().AppHost != "127.0.0.1" {

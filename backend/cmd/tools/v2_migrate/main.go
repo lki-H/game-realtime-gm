@@ -24,6 +24,9 @@ func main() {
 		log.Fatal("set V2_MIGRATION_CONFIRM=I_UNDERSTAND_V2_MIGRATION before applying or reconciling the V2 migration")
 	}
 	cfg := config.Load()
+	if err := config.ValidateDatabase(cfg.Database); err != nil {
+		log.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	db, err := database.NewMySQLDB(ctx, cfg.Database)
