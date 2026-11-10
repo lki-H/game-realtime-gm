@@ -73,6 +73,7 @@ jobs:
       - name: Real storage, race, process recovery and failure isolation
         run: bash experiments/r5-m6/deploy/verify-ci.sh
   gate:
+    name: R5 acceptance gate
     if: always()
     needs: [changes, r5-contracts, r5-integration]
     runs-on: ubuntu-latest
