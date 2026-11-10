@@ -198,6 +198,7 @@ jobs:
           name: owned-local-installation-summary
           path: ${{ runner.temp }}/gm-local-integration-summary.json
   gate:
+    name: PVE acceptance gate
     if: always()
     needs: [changes, tooling, backend, frontend, dependencies, local-smoke]
     runs-on: ubuntu-latest
