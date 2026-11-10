@@ -168,7 +168,6 @@ jobs:
       GOMAXPROCS: '2'
       GOFLAGS: '-p=1'
       GM_BROWSER_SMOKE: '1'
-      GM_BROWSER_MODULE_ROOT: ${{ runner.temp }}/gm-browser
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -182,6 +181,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export GM_BROWSER_MODULE_ROOT="$RUNNER_TEMP/gm-browser"
+          echo "GM_BROWSER_MODULE_ROOT=$GM_BROWSER_MODULE_ROOT" >> "$GITHUB_ENV"
           npm ci --prefix frontend/gm-admin --ignore-scripts --no-audit --no-fund
           npm ci --prefix frontend/pve-demo --ignore-scripts --no-audit --no-fund
           npm install --prefix "$GM_BROWSER_MODULE_ROOT" playwright@1.64.1 --ignore-scripts --no-audit --no-fund
