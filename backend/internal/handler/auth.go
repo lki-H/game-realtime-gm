@@ -40,7 +40,8 @@ type loginRequest struct {
 
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req registerRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	// bcrypt limits UTF-8 bytes; the binding max counts Unicode characters.
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Password) > 72 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    40001,
 			"message": "invalid request",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -28,6 +29,8 @@ type notification struct {
 	Data    json.RawMessage
 }
 
+var errOperationHandlerUnavailable = errors.New("operation handler unavailable")
+
 func (worker *Worker) Run(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -50,7 +53,7 @@ func (worker *Worker) Once(ctx context.Context) error {
 			slog.Error("pve maintenance deferred", "error", err.Error())
 		}
 	}
-	rows, err := worker.DB.QueryContext(ctx, "SELECT operation_id,aggregate_id,operation_type,payload,attempts FROM pve_pending_operations WHERE status IN ('pending','retryable_failed') AND next_attempt_at<=UTC_TIMESTAMP(3) ORDER BY next_attempt_at LIMIT 20")
+	rows, err := worker.DB.QueryContext(ctx, "SELECT operation_id,aggregate_id,operation_type,payload,attempts,next_attempt_at FROM pve_pending_operations WHERE status IN ('pending','retryable_failed') AND next_attempt_at<=UTC_TIMESTAMP(3) ORDER BY next_attempt_at,operation_id LIMIT 20")
 	if err != nil {
 		return err
 	}
@@ -59,11 +62,12 @@ func (worker *Worker) Once(ctx context.Context) error {
 		kind          string
 		payload       json.RawMessage
 		attempts      int
+		scheduled     time.Time
 	}
 	items := []item{}
 	for rows.Next() {
 		var current item
-		if err := rows.Scan(&current.id, &current.aggregate, &current.kind, &current.payload, &current.attempts); err != nil {
+		if err := rows.Scan(&current.id, &current.aggregate, &current.kind, &current.payload, &current.attempts, &current.scheduled); err != nil {
 			rows.Close()
 			return err
 		}
@@ -76,21 +80,41 @@ func (worker *Worker) Once(ctx context.Context) error {
 	}
 	for _, current := range items {
 		var err error
-		if current.kind == "task_completion" && worker.CompleteTask != nil {
-			err = worker.CompleteTask(ctx, current.aggregate, current.payload)
+		if current.attempts < 0 {
+			err = store.Invalid
 		} else {
-			err = worker.Settle(ctx, current.aggregate)
+			switch current.kind {
+			case "task_completion":
+				if worker.CompleteTask == nil {
+					err = errOperationHandlerUnavailable
+				} else {
+					err = worker.CompleteTask(ctx, current.aggregate, current.payload)
+				}
+			case "settlement":
+				if worker.Settle == nil {
+					err = errOperationHandlerUnavailable
+				} else {
+					err = worker.Settle(ctx, current.aggregate)
+				}
+			default:
+				err = store.Invalid
+			}
 		}
+		// A concurrent retry or operator repair may have advanced this job while
+		// its idempotent handler ran. Only acknowledge the selected attempt.
 		if err == nil {
-			if _, err := worker.DB.ExecContext(ctx, "UPDATE pve_pending_operations SET status='done',attempts=attempts+1,last_error=NULL,updated_at=UTC_TIMESTAMP(3) WHERE operation_id=?", current.id); err != nil {
+			if _, err := worker.DB.ExecContext(ctx, "UPDATE pve_pending_operations SET status='done',attempts=attempts+1,last_error=NULL,updated_at=UTC_TIMESTAMP(3) WHERE operation_id=? AND status IN ('pending','retryable_failed') AND attempts=? AND next_attempt_at=?", current.id, current.attempts, current.scheduled); err != nil {
 				return err
 			}
 		} else {
 			status := "retryable_failed"
-			if current.attempts >= 4 {
+			delay := time.Second
+			if current.attempts < 0 || current.attempts >= 4 || errors.Is(err, store.Invalid) || errors.Is(err, errOperationHandlerUnavailable) {
 				status = "needs_repair"
+			} else {
+				delay = time.Duration(1<<current.attempts) * time.Second
 			}
-			_, updateErr := worker.DB.ExecContext(ctx, "UPDATE pve_pending_operations SET status=?,attempts=attempts+1,next_attempt_at=?,last_error='settlement failed; inspect correlated logs',updated_at=UTC_TIMESTAMP(3) WHERE operation_id=?", status, time.Now().UTC().Add(time.Duration(1<<current.attempts)*time.Second), current.id)
+			_, updateErr := worker.DB.ExecContext(ctx, "UPDATE pve_pending_operations SET status=?,attempts=attempts+1,next_attempt_at=?,last_error='operation failed; inspect correlated logs',updated_at=UTC_TIMESTAMP(3) WHERE operation_id=? AND status IN ('pending','retryable_failed') AND attempts=? AND next_attempt_at=?", status, time.Now().UTC().Add(delay), current.id, current.attempts, current.scheduled)
 			if updateErr != nil {
 				return updateErr
 			}

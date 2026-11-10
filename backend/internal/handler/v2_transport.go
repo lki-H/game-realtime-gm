@@ -95,8 +95,7 @@ func (transport *V2Transport) Close() {
 	}
 }
 func (transport *V2Transport) Auth(c *gin.Context) {
-	token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
-	claims, err := auth.ParseToken(transport.Secret, token)
+	claims, err := auth.ParseBearerToken(transport.Secret, c.GetHeader("Authorization"))
 	if err != nil {
 		c.AbortWithStatusJSON(401, gin.H{"code": 40104, "message": "invalid token"})
 		return
@@ -111,7 +110,7 @@ func (transport *V2Transport) Auth(c *gin.Context) {
 
 func V2Session(db *sql.DB, secret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		claims, err := auth.ParseToken(secret, strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))
+		claims, err := auth.ParseBearerToken(secret, c.GetHeader("Authorization"))
 		if err != nil {
 			c.AbortWithStatusJSON(403, gin.H{"code": 40321, "message": "player session revoked or unavailable"})
 			return
@@ -133,7 +132,12 @@ func v2SessionFailure(c *gin.Context, err error) {
 func (transport *V2Transport) WebSocket(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {
-		token = strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+		var err error
+		token, err = auth.BearerToken(c.GetHeader("Authorization"))
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"code": 40122, "message": "invalid websocket authorization"})
+			return
+		}
 	}
 	claims, err := auth.ParseToken(transport.Secret, token)
 	if err != nil {
