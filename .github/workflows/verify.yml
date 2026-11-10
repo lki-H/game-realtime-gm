@@ -149,11 +149,13 @@ jobs:
         run: |
           set -euo pipefail
           go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          vulnerability_status=0
           for module in backend experiments/r5-m6; do
             report="$RUNNER_TEMP/$(echo "$module" | tr / -)-vulnerabilities.json"
-            (cd "$module" && govulncheck -json ./...) > "$report"
-            python -B deploy/review_checks.py --vulnerabilities "$report"
+            (cd "$module" && govulncheck -json ./...) > "$report" || vulnerability_status=1
+            python -B deploy/review_checks.py --vulnerabilities "$report" || vulnerability_status=1
           done
+          exit "$vulnerability_status"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
