@@ -132,10 +132,14 @@ function Assert-LocalMemoryReserve {
     if($memory.commit_bytes -lt 1GB -or $memory.physical_bytes -lt 512MB){throw 'ENV_RESOURCE_BLOCKED: the unchanged 1 GiB commit / 512 MiB physical reserve was reached; this launcher-owned process was stopped.'}
 }
 
-function Start-LocalOwnedProcess([string]$Executable,[string[]]$Arguments){
+function Start-LocalOwnedProcess([string]$Executable,[string[]]$Arguments,[switch]$StripRuntimeSecrets){
     $command=Get-Command $Executable -CommandType Application -ErrorAction Stop|Select-Object -First 1
     $start=[Diagnostics.ProcessStartInfo]::new($command.Source)
     foreach($argument in $Arguments){$start.ArgumentList.Add($argument)}
+    if($StripRuntimeSecrets){
+        if($Executable -ne 'go' -or $Arguments -notcontains 'build'){throw 'Runtime secrets may only be stripped from an owned Go build process.'}
+        foreach($name in @('DB_PASSWORD','REDIS_PASSWORD','JWT_SECRET','PVE_TEST_PASSWORD','PVE_TEST_EVENTS_TOKEN','PVE_METRICS_TOKEN','DC_ADMISSION_KEY','DC_SERVICE_TOKEN','GM_LOCAL_OWNED_ADMIN')){[void]$start.Environment.Remove($name)}
+    }
     $start.WorkingDirectory=(Get-Location).Path
     $start.UseShellExecute=$false;$start.CreateNoWindow=$true
     $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
@@ -155,13 +159,20 @@ function Test-LocalReadiness([string]$Address){
     }catch{return $false}finally{$client.Dispose()}
 }
 
-function Wait-LocalOwnedProcess($Process,[string]$ReadyAddress=''){
-    $ready=!$ReadyAddress;$deadline=[DateTime]::UtcNow.AddSeconds(30)
+function Get-LocalUtcNow { [DateTime]::UtcNow }
+
+function Wait-LocalOwnedProcess($Process,[string]$ReadyAddress='',[ValidateRange(0,600)][int]$TimeoutSeconds=0,[string]$Phase='command'){
+    $started=Get-LocalUtcNow
+    $ready=!$ReadyAddress;$deadline=$started.AddSeconds(30)
+    $processDeadline=if($TimeoutSeconds){$started.AddSeconds($TimeoutSeconds)}else{[DateTime]::MaxValue}
+    $attempts=0;$status='FAIL'
     $nextMemory=[DateTime]::MinValue
     $stdout=$Process.StandardOutput.ReadLineAsync();$stderr=$Process.StandardError.ReadLineAsync()
     try{
         while(!$Process.HasExited){
-            if([DateTime]::UtcNow -ge $nextMemory){Assert-LocalMemoryReserve;$nextMemory=[DateTime]::UtcNow.AddSeconds(1)}
+            $now=Get-LocalUtcNow
+            if($now -ge $nextMemory){Assert-LocalMemoryReserve;$nextMemory=$now.AddSeconds(1)}
+            if($now -ge $processDeadline){throw ('Owned '+$Phase+' exceeded its '+$TimeoutSeconds+' second deadline.')}
             foreach($stream in @('stdout','stderr')){
                 for($lineCount=0;$lineCount -lt 128;$lineCount++){
                     $pending=if($stream -eq 'stdout'){$stdout}else{$stderr}
@@ -173,8 +184,9 @@ function Wait-LocalOwnedProcess($Process,[string]$ReadyAddress=''){
                 }
             }
             if(!$ready){
+                $attempts++
                 if(Test-LocalReadiness $ReadyAddress){$ready=$true;Write-Host ('Service ready: '+$ReadyAddress)}
-                elseif([DateTime]::UtcNow -ge $deadline){throw 'Owned service did not become ready within 30 seconds.'}
+                elseif((Get-LocalUtcNow) -ge $deadline){throw 'Owned service did not become ready within 30 seconds.'}
             }
             [void]$Process.WaitForExit(100)
         }
@@ -188,7 +200,12 @@ function Wait-LocalOwnedProcess($Process,[string]$ReadyAddress=''){
         }
         if(!$ready){throw 'Owned service exited before readiness was confirmed.'}
         if($Process.ExitCode -ne 0){throw ('Local owned process failed (exit '+$Process.ExitCode+').')}
-    }finally{Stop-LocalOwnedProcess $Process;$Process.Dispose()}
+        $status='PASS'
+    }finally{
+        Stop-LocalOwnedProcess $Process
+        [pscustomobject]@{local_phase=$Phase;status=$status;exit_code=$(if($Process.HasExited){$Process.ExitCode}else{$null});elapsed_ms=[Math]::Round(((Get-LocalUtcNow)-$started).TotalMilliseconds);readiness_budget_seconds=$(if($ReadyAddress){30}else{0});readiness_attempts=$attempts;ready_seen=$(if($ReadyAddress){$ready}else{$false})}|ConvertTo-Json -Compress|Write-Output
+        $Process.Dispose()
+    }
 }
 
 function Invoke-LocalNative([string]$Executable,[string[]]$Arguments,[string]$ReadyAddress=''){
@@ -200,6 +217,41 @@ function Invoke-LocalNative([string]$Executable,[string[]]$Arguments,[string]$Re
     }
     & $Executable @Arguments
     if($LASTEXITCODE -ne 0){throw ('Local command failed: '+$Executable+' (exit '+$LASTEXITCODE+').')}
+}
+
+function Invoke-LocalServer($Context,[string]$ReadyAddress){
+    # Compilation has its own budget. The unchanged 30-second readiness clock
+    # begins only after the successfully built server executable starts.
+    $tempParent=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
+    $directory=Join-Path $tempParent ('gm-local-server-'+[Guid]::NewGuid().ToString('N'))
+    [void](Assert-LocalExternalPath $directory $Context.project)
+    [void](Assert-LocalExternalPath $directory $Context.root)
+    [void](Assert-LocalExternalPath $directory $Context.private)
+    if(Test-Path -LiteralPath $directory){throw 'Temporary server build directory already exists.'}
+    [void][IO.Directory]::CreateDirectory($directory)
+    $binary=Join-Path $directory $(if($IsWindows){'server.exe'}else{'server'})
+    try{
+        Set-LocalPrivatePermissions $directory
+        Assert-LocalMemoryAdmission Go
+        $build=Start-LocalOwnedProcess 'go' @('build','-p','1','-o',$binary,'./cmd/server') -StripRuntimeSecrets
+        Wait-LocalOwnedProcess $build -TimeoutSeconds 600 -Phase server_build
+        if(!(Test-Path -LiteralPath $binary -PathType Leaf) -or ((Get-Item -LiteralPath $binary -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Owned server build produced no regular executable.'}
+        Assert-LocalMemoryAdmission Go
+        $server=Start-LocalOwnedProcess $binary @()
+        Wait-LocalOwnedProcess $server -ReadyAddress $ReadyAddress -Phase server_runtime
+    }finally{
+        # Wait-LocalOwnedProcess stops and disposes each owned process before
+        # this exact-file cleanup. Never recursively remove unknown contents.
+        $resolved=[IO.Path]::GetFullPath($directory)
+        if([IO.Path]::GetDirectoryName($resolved) -ne $tempParent -or [IO.Path]::GetFileName($resolved) -notmatch '^gm-local-server-[a-f0-9]{32}$'){throw 'Temporary server cleanup boundary mismatch.'}
+        [void](Assert-LocalExternalPath $resolved $Context.project)
+        if(Test-Path -LiteralPath $resolved){
+            $contents=@(Get-ChildItem -LiteralPath $resolved -Force)
+            if(@($contents|Where-Object{$_.FullName -ne $binary -or $_.PSIsContainer -or ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0}).Count){throw 'Unknown temporary server contents retained; automatic cleanup refused.'}
+            if(Test-Path -LiteralPath $binary){Remove-Item -LiteralPath $binary}
+            Remove-Item -LiteralPath $resolved
+        }
+    }
 }
 
 function Read-LocalDocker([string[]]$Arguments){

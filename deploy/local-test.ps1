@@ -9,22 +9,50 @@ $global:localModelState=$null
 $global:localModelCalls=[Collections.Generic.List[string]]::new()
 $global:localModelGoCalls=0;$global:localModelGoFail=$false;$global:localModelGoExplicit=$false
 $global:localModelCommitMB=8192;$global:localModelPhysicalMB=8192;$global:localModelMemoryUnavailable=$false
+$global:localModelBuildFail=$false;$global:localModelRuntimeExitBeforeReady=$false;$global:localModelReadinessAttempts=0;$global:localModelNeverReady=$false
+$global:localModelBuildEnvSanitized=$false
+$global:localModelClock=[DateTime]'2026-11-10T00:00:00Z';$global:localModelBuildElapsed=0;$global:localModelBuildTimeout=$false
 function global:Get-CimInstance {
     if($global:localModelMemoryUnavailable){throw 'Unavailable model counters.'}
     [pscustomobject]@{FreeVirtualMemory=$global:localModelCommitMB*1024;FreePhysicalMemory=$global:localModelPhysicalMB*1024}
 }
 function New-LocalModelProcess([int]$ExitCode=0,[int]$ExitAfterWaits=1){
-    $process=[pscustomobject]@{HasExited=$false;ExitCode=$ExitCode;waits=0;exit_after=$ExitAfterWaits;killed=$false;disposed=$false;StandardOutput=[IO.StringReader]::new("Fake owned process output.`n");StandardError=[IO.StringReader]::new('')}
-    $process|Add-Member ScriptMethod WaitForExit {param($milliseconds);$this.waits++;if($this.waits -ge $this.exit_after){$this.HasExited=$true};return $this.HasExited}
+    $process=[pscustomobject]@{HasExited=$false;ExitCode=$ExitCode;waits=0;exit_after=$ExitAfterWaits;advance_seconds=0;killed=$false;disposed=$false;StandardOutput=[IO.StringReader]::new("Fake owned process output.`n");StandardError=[IO.StringReader]::new('')}
+    $process|Add-Member ScriptMethod WaitForExit {param($milliseconds);$this.waits++;$global:localModelClock=$global:localModelClock.AddSeconds($this.advance_seconds);if($this.waits -ge $this.exit_after){$this.HasExited=$true};return $this.HasExited}
     $process|Add-Member ScriptMethod Kill {param($entireTree);if(!$entireTree){throw 'Owned process cleanup must cover its own children.'};$this.killed=$true;$this.HasExited=$true}
     $process|Add-Member ScriptMethod Dispose {$this.disposed=$true;$this.StandardOutput.Dispose();$this.StandardError.Dispose()}
     $process
 }
-function Start-LocalOwnedProcess([string]$Executable,[string[]]$Arguments){
-    if($Arguments -notcontains './cmd/tools/local_check' -or $Arguments -contains './cmd/tools/v2_migrate'){throw 'Existing Check invoked a writing tool.'}
-    $global:localModelGoCalls++
-    $global:localModelGoExplicit=$env:DB_NAME -eq 'game_realtime' -and $env:DB_PASSWORD -ne 'caller-value-not-a-secret' -and !$env:PVE_TEST_EVENTS_ENABLED -and !$env:DC_GAME_ENABLED
-    New-LocalModelProcess -ExitCode $(if($global:localModelGoFail){9}else{0})
+function Start-LocalOwnedProcess([string]$Executable,[string[]]$Arguments,[switch]$StripRuntimeSecrets){
+    if($Arguments -contains './cmd/tools/local_check'){
+        if($Arguments -contains './cmd/tools/v2_migrate'){throw 'Existing Check invoked a writing tool.'}
+        $global:localModelGoCalls++
+        $global:localModelGoExplicit=$env:DB_NAME -eq 'game_realtime' -and $env:DB_PASSWORD -ne 'caller-value-not-a-secret' -and !$env:PVE_TEST_EVENTS_ENABLED -and !$env:DC_GAME_ENABLED
+        return (New-LocalModelProcess -ExitCode $(if($global:localModelGoFail){9}else{0}))
+    }
+    if($Arguments -contains 'build'){
+        $global:localModelBuildEnvSanitized=[bool]$StripRuntimeSecrets
+        $outputIndex=[Array]::IndexOf($Arguments,'-o')
+        if($outputIndex -lt 0){throw 'Server build did not use the isolated artifact path.'}
+        $global:localModelLastBuild=$Arguments[$outputIndex+1]
+        if(!$global:localModelBuildFail){[IO.File]::WriteAllBytes($global:localModelLastBuild,[byte[]](1,2,3,4))}
+        $process=New-LocalModelProcess -ExitCode $(if($global:localModelBuildFail){2}else{0}) -ExitAfterWaits $(if($global:localModelBuildTimeout){100}else{2})
+        $process.advance_seconds=if($global:localModelBuildTimeout){301}else{$global:localModelBuildElapsed/2}
+        return $process
+    }
+    if($Arguments.Count -eq 0){
+        $global:localModelServerStarted++
+        $process=New-LocalModelProcess -ExitCode $(if($global:localModelRuntimeExitBeforeReady){2}else{0}) -ExitAfterWaits $(if($global:localModelRuntimeExitBeforeReady){1}else{5})
+        $process.advance_seconds=1
+        return $process
+    }
+    throw 'Unexpected local Go process arguments.'
+}
+function Get-LocalUtcNow {return $global:localModelClock}
+function Test-LocalReadiness([string]$Address){
+    $global:localModelReadinessAttempts++
+    if($global:localModelNeverReady){$global:localModelClock=$global:localModelClock.AddSeconds(11);return $false}
+    $global:localModelReadinessAttempts -ge 3
 }
 function Invoke-LocalModelEntry {
     # Execute the unchanged entry logic against the functions loaded above.
@@ -65,6 +93,7 @@ function Assert-LocalFreePorts([int[]]$Ports,[switch]$AllowOwned){if($script:loc
 function Assert-Model([bool]$Condition,[string]$Name){if(!$Condition){throw ('Model assertion failed: '+$Name)};$testCases.Add($Name)}
 function Assert-ModelReject([scriptblock]$Action,[string]$Name){$rejected=$false;try{& $Action|Out-Null}catch{$rejected=$true};Assert-Model $rejected $Name}
 $localBlockPorts=$false;$localStopped=$false
+$global:localModelServerStarted=0
 $originalPassword=$env:DB_PASSWORD;$originalTestFlag=$env:PVE_TEST_EVENTS_ENABLED
 try{
     [void][IO.Directory]::CreateDirectory($testRoot)
@@ -149,6 +178,32 @@ try{
     function Test-LocalReadiness([string]$Address){return $false}
     $earlyExit=New-LocalModelProcess
     Assert-ModelReject {Wait-LocalOwnedProcess $earlyExit -ReadyAddress 'http://127.0.0.1:18080/ready'} 'server exit before readiness remains a failure'
+    function Test-LocalReadiness([string]$Address){
+        $global:localModelReadinessAttempts++
+        if($global:localModelNeverReady){$global:localModelClock=$global:localModelClock.AddSeconds(11);return $false}
+        return $global:localModelReadinessAttempts -ge 3
+    }
+    $runtimeCount=$global:localModelServerStarted;$global:localModelBuildFail=$true
+    Assert-ModelReject {Invoke-LocalServer $localContext 'http://127.0.0.1:18080/ready'} 'failed compile is a failure before ready wait'
+    Assert-Model ($global:localModelServerStarted -eq $runtimeCount -and !(Test-Path -LiteralPath $global:localModelLastBuild)) 'failed compile never starts Server and removes its exact temporary directory'
+    Assert-Model $global:localModelBuildEnvSanitized 'build-only child does not inherit runtime secrets'
+    $global:localModelBuildFail=$false;$global:localModelBuildElapsed=75;$global:localModelReadinessAttempts=0
+    $beforeRuntime=$global:localModelClock
+    Invoke-LocalServer $localContext 'http://127.0.0.1:18080/ready'|Out-Null
+    Assert-Model (($global:localModelClock-$beforeRuntime).TotalSeconds -ge 75 -and $global:localModelReadinessAttempts -eq 3) 'cold-cache compile time is excluded from the 30-second runtime ready clock'
+    Assert-Model (!(Test-Path -LiteralPath $global:localModelLastBuild)) 'successful server exit removes only its temporary executable and directory'
+    $global:localModelBuildTimeout=$true;$runtimeCount=$global:localModelServerStarted
+    Assert-ModelReject {Invoke-LocalServer $localContext 'http://127.0.0.1:18080/ready'} 'compile exceeding 600 seconds fails under its own deadline'
+    Assert-Model ($global:localModelServerStarted -eq $runtimeCount -and !(Test-Path -LiteralPath $global:localModelLastBuild)) 'compile timeout never starts runtime and removes its own temporary artifact'
+    $global:localModelBuildTimeout=$false;$global:localModelBuildElapsed=0
+    $global:localModelRuntimeExitBeforeReady=$true;$global:localModelReadinessAttempts=0
+    Assert-ModelReject {Invoke-LocalServer $localContext 'http://127.0.0.1:18080/ready'} 'compiled executable exit before readiness remains a runtime failure'
+    Assert-Model (!(Test-Path -LiteralPath $global:localModelLastBuild)) 'early runtime exit also clears only its own temporary artifact'
+    $global:localModelRuntimeExitBeforeReady=$false
+    $global:localModelBuildElapsed=0;$global:localModelNeverReady=$true;$global:localModelReadinessAttempts=0
+    $runtimeCount=$global:localModelServerStarted
+    Assert-ModelReject {Invoke-LocalServer $localContext 'http://127.0.0.1:18080/ready'} 'runtime readiness timeout remains a failure'
+    Assert-Model ($global:localModelServerStarted -eq ($runtimeCount+1) -and !(Test-Path -LiteralPath $global:localModelLastBuild)) 'runtime readiness failure cleans owned process and exact temporary artifact'
     $existing.environment|Add-Member -NotePropertyName Execute -NotePropertyValue 'throw malicious-config'
     Write-LocalJson $existingPath $existing
     Assert-ModelReject {Read-LocalExistingEnvironment $localContext $existingPath} 'unknown executable-style configuration keys are rejected without evaluation'

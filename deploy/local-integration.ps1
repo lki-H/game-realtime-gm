@@ -115,8 +115,13 @@ function Get-IntegrationFailureCategories {
         admin_creation_failed='(?i)administrator creation failed'
         ownership_mismatch='(?i)ownership does not match|identity mismatch|unrecognized state|foreign container'
     }
-    foreach($path in Get-ChildItem -LiteralPath $evidence -File -Filter '*.log'){
-        $reader=[IO.StreamReader]::new($path.FullName)
+    # Classify only the failed stage. Expected rejections in earlier stages
+    # (for example duplicate administrator creation) are not failure evidence.
+    $stage=$failedStage
+    if($stage -notmatch '^[a-z0-9-]{1,64}$'){return @('uncategorized_failure')}
+    foreach($path in @(Join-Path $evidence ($stage+'.stdout.log');Join-Path $evidence ($stage+'.stderr.log'))){
+        if(!(Test-Path -LiteralPath $path -PathType Leaf)){continue}
+        $reader=[IO.StreamReader]::new($path)
         try{
             $buffer=[char[]]::new(262144)
             $count=$reader.ReadBlock($buffer,0,$buffer.Length)
@@ -207,7 +212,9 @@ try{
 
     $server=Start-IntegrationProcess 'pwsh' @('-NoLogo','-NoProfile','-NonInteractive','-File',$entry,'-Action','Server','-StateRoot',$context.root) 'server'
     $base='http://127.0.0.1:'+$state.http_port
-    Wait-IntegrationReady $server ($base+'/ready')
+    # The launcher enforces separate 600s compile and 30s runtime-ready
+    # budgets. The harness must not impose its old 90s combined deadline.
+    Wait-IntegrationReady $server ($base+'/ready') -TimeoutSeconds 660
     Assert-Integration $true 'isolated_server_ready_with_real_storage'
     if($env:GM_BROWSER_SMOKE -eq '1'){
         $browserStatus='RUNNING'

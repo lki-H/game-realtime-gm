@@ -75,7 +75,7 @@ try{
                 Invoke-LocalNative go @('run','-p','1','./cmd/tools/local_check','-expected-database',$values.DB_NAME)
                 Write-Host ('Starting foreground V2 service at http://'+$values.APP_HOST+':'+$values.APP_PORT+'; stop this owned process with Ctrl+C.')
                 $readyHost=if($values.APP_HOST -eq '::1'){'[::1]'}else{$values.APP_HOST}
-                Invoke-LocalNative go @('run','-p','1','./cmd/server') -ReadyAddress ('http://'+$readyHost+':'+$values.APP_PORT+'/ready')
+                Invoke-LocalServer $context -ReadyAddress ('http://'+$readyHost+':'+$values.APP_PORT+'/ready')
             }
         }
     }finally{Pop-Location}
