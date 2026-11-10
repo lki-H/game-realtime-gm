@@ -4,6 +4,7 @@ set -euo pipefail
 module_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 project_root="$(cd "$module_root/../.." && pwd)"
 compose_file="$module_root/deploy/compose.yaml"
+python3 "$module_root/deploy/test-queue-observation.py"
 evidence="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/r5-ci.XXXXXX")"
 chmod 700 "$evidence"
 mkdir "$evidence/bin"
@@ -83,8 +84,39 @@ go mod verify
 report_sql() {
   printf '%s\n' "$1" | docker exec -i gm-r5-verify-mysql-1 sh -lc 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -N -B -uroot game_realtime_r5_reports'
 }
+queue_state() {
+  local rows
+  rows="$(docker exec gm-r5-verify-rabbitmq-1 rabbitmqctl -q -t 5 list_queues -p r5 name type durable messages_ready messages_unacknowledged consumers)" || return 1
+  awk '$1=="r5.reports" {
+    if (NF!=6 || $2!="quorum" || $3!="true" || $4!~/^[0-9]+$/ || $5!~/^[0-9]+$/ || $6!~/^[0-9]+$/) exit 2
+    print $2, $3, $4, $5, $6; found=1
+  } END {if (!found) exit 1}' <<<"$rows"
+}
 queue_ready() {
-  docker exec gm-r5-verify-rabbitmq-1 rabbitmqctl -q list_queues -p r5 name messages_ready | awk '$1=="r5.reports" {print $2}'
+  local snapshot type durable ready unacknowledged consumers
+  snapshot="$(queue_state)" || return 1
+  read -r type durable ready unacknowledged consumers <<<"$snapshot"
+  printf '%s\n' "$ready"
+}
+await_queue_backlog() {
+  local stage="$1" minimum="$2" observations="${3:-30}"
+  local snapshot type durable ready unacknowledged consumers observation
+  if [[ ! "$minimum" =~ ^[0-9]+$ || "$minimum" -lt 1 || ! "$observations" =~ ^[0-9]+$ || "$observations" -lt 1 || "$observations" -gt 30 ]]; then return 1; fi
+  # Quorum queue info reads queue_coarse_metrics, updated asynchronously by the
+  # FIFO tick. A publisher confirm is not a barrier for this statistics cache.
+  # Poll the same assertion before and after restart; never consume to inspect.
+  for ((observation=1; observation<=observations; observation++)); do
+    if snapshot="$(queue_state)"; then
+      read -r type durable ready unacknowledged consumers <<<"$snapshot"
+      printf '{"stage":"%s","observation":%d,"minimum_confirmed":%d,"queue_type":"%s","durable":%s,"ready":%d,"unacknowledged":%d,"consumers":%d}\n' "$stage" "$observation" "$minimum" "$type" "$durable" "$ready" "$unacknowledged" "$consumers" >&2
+      if [[ "$ready" -ge "$minimum" && "$unacknowledged" -eq 0 && "$consumers" -eq 0 ]]; then printf '%s\n' "$ready"; return 0; fi
+    else
+      printf '{"stage":"%s","observation":%d,"queue_state":"unavailable_or_invalid"}\n' "$stage" "$observation" >&2
+    fi
+    if [[ "$observation" -lt "$observations" ]]; then sleep 1; fi
+  done
+  printf 'Confirmed backlog was not observed within the bounded %s window.\n' "$stage" >&2
+  return 1
 }
 start_role() {
   "$evidence/bin/r5-linux" -mode "$1" -config "$evidence/$1.json" >"$evidence/$1.stdout.log" 2>"$evidence/$1.stderr.log" &
@@ -104,8 +136,12 @@ for attempt in $(seq 1 60); do
 done
 if [[ "$published" != true ]]; then printf '%s\n' 'Confirmed backlog was not prepared.' >&2; exit 1; fi
 stop_roles
-backlog_before="$(queue_ready)"
-if [[ "$backlog_before" -lt 1 ]]; then printf '%s\n' 'Confirmed backlog is missing.' >&2; exit 1; fi
+confirmed_deliveries="$(report_sql "SELECT COUNT(*) FROM r5_deliveries WHERE status='published'")"
+remaining_deliveries="$(report_sql "SELECT COUNT(*) FROM r5_deliveries WHERE status<>'published'")"
+confirmation_events="$(awk 'index($0,"\"msg\":\"r5 delivery confirmed\"") {count++} END {print count+0}' "$evidence/publisher.stdout.log")"
+printf '{"stage":"backlog_published","confirmed_deliveries":%d,"remaining_deliveries":%d,"confirmation_events":%d}\n' "$confirmed_deliveries" "$remaining_deliveries" "$confirmation_events"
+if [[ "$confirmed_deliveries" -lt 1 || "$remaining_deliveries" -ne 0 || "$confirmation_events" -lt "$confirmed_deliveries" ]]; then printf '%s\n' 'Publisher confirm evidence does not cover the prepared deliveries.' >&2; exit 1; fi
+backlog_before="$(await_queue_backlog before_restart "$confirmed_deliveries")"
 docker compose -f "$compose_file" stop rabbitmq
 # RPC receives only its source reader and service identities, even while MQ is down.
 start_role rpc
@@ -119,13 +155,14 @@ docker exec gm-r5-verify-main-1 /r5/bin/verify-linux -mode scenario
 docker exec gm-r5-verify-main-1 /r5/bin/verify-linux -mode check
 stop_roles
 docker compose -f "$compose_file" up -d --wait --wait-timeout 120 rabbitmq
-if [[ "$(queue_ready)" -lt "$backlog_before" ]]; then printf '%s\n' 'Broker restart lost confirmed backlog.' >&2; exit 1; fi
+backlog_after="$(await_queue_backlog after_restart "$backlog_before")"
+printf '{"stage":"backlog_restart_verified","before":%d,"after":%d}\n' "$backlog_before" "$backlog_after"
 start_role consumer
 recovered=false
 for attempt in $(seq 1 60); do
   expected="$(report_sql 'SELECT COUNT(*) FROM r5_deliveries')"
   applied="$(report_sql "SELECT COUNT(*) FROM r5_receipts WHERE status='applied'")"
-  if [[ "$applied" -eq "$expected" && "$(queue_ready)" -eq 0 ]]; then recovered=true; break; fi
+  if [[ "$applied" -eq "$expected" ]] && ready="$(queue_ready)" && [[ "$ready" -eq 0 ]]; then recovered=true; break; fi
   sleep 1
 done
 if [[ "$recovered" != true ]]; then printf '%s\n' 'Persisted backlog did not recover.' >&2; exit 1; fi

@@ -76,7 +76,8 @@ function Invoke-IntegrationEntry([string]$Action,[string]$Label,[string]$Profile
 function Invoke-IntegrationSQL([string]$SQL){
     Assert-LocalResources $context $state -RequireRunning
     $arguments=@(Get-LocalComposeArguments $context $state)+@('exec','-T','mysql','sh','-c','MYSQL_PWD="$(cat /run/secrets/mysql-root-password)" exec mysql --batch --skip-column-names --default-character-set=utf8mb4 -h 127.0.0.1 -u root game_realtime_local')
-    $start=[Diagnostics.ProcessStartInfo]::new((Get-Command docker -CommandType Application).Source)
+    $docker=Get-Command docker -CommandType Application -ErrorAction Stop|Select-Object -First 1
+    $start=[Diagnostics.ProcessStartInfo]::new($docker.Source)
     foreach($argument in $arguments){$start.ArgumentList.Add($argument)}
     $start.UseShellExecute=$false;$start.CreateNoWindow=$true
     $start.RedirectStandardInput=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
@@ -209,6 +210,7 @@ try{
     Wait-IntegrationReady $server ($base+'/ready')
     Assert-Integration $true 'isolated_server_ready_with_real_storage'
     if($env:GM_BROWSER_SMOKE -eq '1'){
+        $browserStatus='RUNNING'
         foreach($path in @('frontend/gm-admin/node_modules','frontend/pve-demo/node_modules')){if(!(Test-Path -LiteralPath (Join-Path $project $path) -PathType Container)){throw 'Browser smoke requires frontend npm ci in this CI job.'}}
         $frontendEnvironment=@{PVE_BACKEND_URL=$base}
         $adminUI=Start-IntegrationProcess 'npm' @('run','dev','--','--host','127.0.0.1','--port','5173','--strictPort') 'gm-admin-ui' (Join-Path $project 'frontend/gm-admin') $frontendEnvironment
@@ -266,7 +268,21 @@ try{
             Remove-Item -LiteralPath $resolved -Recurse -Force
         }
     }
-    $summary=[pscustomobject]@{status=$(if($success){'PASS_LOCAL_LAUNCHER_REAL_STORAGE'}else{'FAIL_LOCAL_LAUNCHER_REAL_STORAGE'});stage=$failedStage;cleanup_failed=$cleanupFailed;failure_categories=@(Get-IntegrationFailureCategories);owned_container_states=$containerStates;checks=$checks.ToArray();browser=$browserStatus;existing_check_scope='guarded synthetic Check window: schema/index/migration-ledger fingerprints and observed application counts; not a claim of zero whole-server internal writes';credentials_published=$false}
+    if($env:GM_BROWSER_SMOKE -eq '1' -and $browserStatus -ne 'PASS'){$browserStatus='FAIL'}
+    $browserDetails=[ordered]@{status=$browserStatus;passed_checks=0}
+    $browserSummary=Join-Path $evidence 'browser/browser-summary.json'
+    if(Test-Path -LiteralPath $browserSummary){
+        try{
+            $result=Read-LocalJson $browserSummary
+            $browserDetails.passed_checks=@($result.checks|Where-Object status -eq 'PASS').Count
+            if($result.PSObject.Properties.Name -contains 'failure'){
+                foreach($field in @('phase','code')){
+                    if([string]$result.failure.$field -match '^[a-z0-9_]{1,96}$'){$browserDetails['failure_'+$field]=[string]$result.failure.$field}
+                }
+            }
+        }catch{$success=$false;$browserStatus='FAIL';$browserDetails.status='FAIL'}
+    }
+    $summary=[pscustomobject]@{status=$(if($success){'PASS_LOCAL_LAUNCHER_REAL_STORAGE'}else{'FAIL_LOCAL_LAUNCHER_REAL_STORAGE'});stage=$failedStage;cleanup_failed=$cleanupFailed;failure_categories=@(Get-IntegrationFailureCategories);owned_container_states=$containerStates;checks=$checks.ToArray();browser=$browserStatus;browser_details=$browserDetails;existing_check_scope='guarded synthetic Check window: schema/index/migration-ledger fingerprints and observed application counts; not a claim of zero whole-server internal writes';credentials_published=$false}
     Write-LocalJson (Join-Path $evidence 'summary.json') $summary
     Write-LocalJson (Join-Path $parent 'gm-local-integration-summary.json') $summary
     $summary|ConvertTo-Json -Depth 5

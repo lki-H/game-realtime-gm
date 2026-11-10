@@ -39,6 +39,8 @@ jobs:
           python -B ../../deploy/review_checks.py --test-events "$RUNNER_TEMP/r5-unit-tests.jsonl" --kind r5-unit --json "$RUNNER_TEMP/r5-unit-summary.json"
           go vet -p 1 ./...
           go mod verify
+      - name: Bounded queue observation regression
+        run: python -B experiments/r5-m6/deploy/test-queue-observation.py
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
